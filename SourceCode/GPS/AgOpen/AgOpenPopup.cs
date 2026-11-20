@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using AgLibrary.Logging;
 
 namespace AgOpenGPS.AgOpen
 {
@@ -63,6 +64,7 @@ namespace AgOpenGPS.AgOpen
         private PopupElement touched;
         private Bitmap canvas;
         private bool redrawPending;
+        private bool drawProblemLogged;
         private bool filtering;
         private string edgeNote = "";
         private double edgeShare = 1.0;
@@ -210,8 +212,21 @@ namespace AgOpenGPS.AgOpen
                 {
                     if (!element.Visible || element.Bounds.Width <= 0 || element.Bounds.Height <= 0) continue;
                     GraphicsState state = g.Save();
-                    g.SetClip(element.Bounds);
-                    element.Paint(g);
+                    try
+                    {
+                        g.SetClip(element.Bounds);
+                        element.Paint(g);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Odd data (e.g. a broken field file) must never take AgOpenGPS down:
+                        // leave that piece out and note it once.
+                        if (!drawProblemLogged)
+                        {
+                            drawProblemLogged = true;
+                            Log.EventWriter("[AgOpen] Pop-up drawing problem: " + ex);
+                        }
+                    }
                     g.Restore(state);
                 }
                 PaintEdgeNote(g);
