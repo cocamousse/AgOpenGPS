@@ -17,26 +17,25 @@ namespace AgOpenGPS.AgOpen
     /// </summary>
     public class FormAgOpenStart : AgOpenPopup
     {
-        private readonly Panel pageStart = new Panel();
-        private readonly Panel pageFields = new Panel();
-
         // Start page
-        private readonly Label labelHub = new Label();
-        private readonly PopupTile tileEquipment = new PopupTile();
-        private readonly PopupTile tileFields = new PopupTile();
-        private readonly PopupTile tileContinue = new PopupTile();
+        private readonly PopupLabel labelHub;
+        private readonly PopupTile tileEquipment;
+        private readonly PopupTile tileFields;
+        private readonly PopupTile tileContinue;
 
         // Fields page
-        private readonly PopupTile tileBack = new PopupTile();
-        private readonly Label labelFieldsTitle = new Label();
-        private readonly PopupTile tileSort = new PopupTile();
-        private readonly PopupList listFields = new PopupList();
-        private readonly Label labelFieldName = new Label();
-        private readonly Label labelFieldInfo = new Label();
-        private readonly FieldPreview preview = new FieldPreview();
-        private readonly PopupTile tileLoad = new PopupTile();
-        private readonly PopupTile tileEdit = new PopupTile();
+        private readonly PopupTile tileBack;
+        private readonly PopupLabel labelFieldsTitle;
+        private readonly PopupTile tileSort;
+        private readonly PopupList listFields;
+        private readonly PopupLabel labelFieldName;
+        private readonly PopupLabel labelFieldInfo;
+        private readonly FieldPreview preview;
+        private readonly PopupTile tileLoad;
+        private readonly PopupTile tileEdit;
 
+        private readonly List<PopupElement> startPage = new List<PopupElement>();
+        private readonly List<PopupElement> fieldsPage = new List<PopupElement>();
         private readonly System.Windows.Forms.Timer refreshTimer = new System.Windows.Forms.Timer();
         private readonly List<Image> pictures = new List<Image>();
 
@@ -47,110 +46,93 @@ namespace AgOpenGPS.AgOpen
 
         public FormAgOpenStart(FormGPS mf) : base(mf)
         {
-            Text = "AgOpen";
             EdgeNote = "Touch anywhere else to go to the map";
-            Build();
+
+            // Start page
+            labelHub = Add(new PopupLabel { Font = SmallFont, ForeColor = DimText });
+
+            tileEquipment = Add(new PopupTile
+            {
+                Picture = Keep(Properties.Resources.vehiclePageTractor),
+                Title = "Change equipment settings"
+            });
+            tileEquipment.Click += TileEquipment_Click;
+
+            tileFields = Add(new PopupTile
+            {
+                Picture = Keep(Properties.Resources.JobActive),
+                Title = "Show fields"
+            });
+            tileFields.Click += (s, e) => ShowPage(true);
+
+            tileContinue = Add(new PopupTile
+            {
+                Wide = true,
+                Accent = true,
+                Picture = Keep(Properties.Resources.Play)
+            });
+            tileContinue.Click += (s, e) => OpenField(continueFolder, false);
+
+            startPage.AddRange(new PopupElement[] { labelHub, tileEquipment, tileFields, tileContinue });
+
+            // Fields page
+            tileBack = Add(new PopupTile
+            {
+                Wide = true,
+                Picture = Keep(Properties.Resources.back_button),
+                Title = "Back"
+            });
+            tileBack.Click += (s, e) => ShowPage(false);
+
+            labelFieldsTitle = Add(new PopupLabel { Font = HeadingFont });
+
+            tileSort = Add(new PopupTile
+            {
+                Wide = true,
+                Picture = Keep(Properties.Resources.Sort),
+                TitleFont = InfoFont
+            });
+            tileSort.Click += (s, e) =>
+            {
+                sortNearest = !sortNearest;
+                ReadFields();
+            };
+
+            listFields = Add(new PopupList());
+            listFields.SelectedIndexChanged += (s, e) => ShowSelectedField();
+
+            labelFieldName = Add(new PopupLabel { Font = HeadingFont });
+            labelFieldInfo = Add(new PopupLabel { Font = InfoFont, ForeColor = DimText });
+
+            preview = Add(new FieldPreview { EmptyText = "Tap a field to see it here." });
+
+            tileLoad = Add(new PopupTile
+            {
+                Wide = true,
+                Accent = true,
+                Picture = Keep(Properties.Resources.FileOpen),
+                Title = "Load"
+            });
+            tileLoad.Click += (s, e) => OpenSelected(false);
+
+            tileEdit = Add(new PopupTile
+            {
+                Wide = true,
+                Picture = Keep(Properties.Resources.Boundary),
+                Title = "Edit",
+                Detail = "boundary"
+            });
+            tileEdit.Click += (s, e) => OpenSelected(true);
+
+            fieldsPage.AddRange(new PopupElement[]
+            {
+                tileBack, labelFieldsTitle, tileSort, listFields, labelFieldName, labelFieldInfo, preview, tileLoad, tileEdit
+            });
+
             ShowPage(false);
 
             refreshTimer.Interval = 1000;
             refreshTimer.Tick += (s, e) => ShowHubLine();
-        }
-
-        #region Building
-
-        private void Build()
-        {
-            SuspendLayout();
-
-            foreach (Panel page in new[] { pageStart, pageFields })
-            {
-                page.BackColor = BoxColor;
-                page.ForeColor = Color.White;
-                Controls.Add(page);
-            }
-
-            // Start page
-            labelHub.Font = SmallFont;
-            labelHub.ForeColor = DimText;
-            labelHub.BackColor = BoxColor;
-            labelHub.TextAlign = ContentAlignment.MiddleLeft;
-            labelHub.AutoEllipsis = true;
-
-            tileEquipment.Picture = Keep(Properties.Resources.vehiclePageTractor);
-            tileEquipment.Title = "Change equipment settings";
-            tileEquipment.Click += TileEquipment_Click;
-
-            tileFields.Picture = Keep(Properties.Resources.JobActive);
-            tileFields.Title = "Show fields";
-            tileFields.Click += (s, e) => ShowPage(true);
-
-            tileContinue.Wide = true;
-            tileContinue.TileColor = AccentColor;
-            tileContinue.Picture = Keep(Properties.Resources.Play);
-            tileContinue.Click += TileContinue_Click;
-
-            pageStart.Controls.Add(labelHub);
-            pageStart.Controls.Add(tileEquipment);
-            pageStart.Controls.Add(tileFields);
-            pageStart.Controls.Add(tileContinue);
-
-            // Fields page
-            tileBack.Wide = true;
-            tileBack.Picture = Keep(Properties.Resources.back_button);
-            tileBack.Title = "Back";
-            tileBack.Click += (s, e) => ShowPage(false);
-
-            labelFieldsTitle.Font = HeadingFont;
-            labelFieldsTitle.ForeColor = Color.White;
-            labelFieldsTitle.BackColor = BoxColor;
-            labelFieldsTitle.TextAlign = ContentAlignment.MiddleLeft;
-            labelFieldsTitle.AutoEllipsis = true;
-
-            tileSort.Wide = true;
-            tileSort.Picture = Keep(Properties.Resources.Sort);
-            tileSort.TitleFont = SmallFont;
-            tileSort.Click += TileSort_Click;
-
-            listFields.EmptyText = "No fields on this tablet yet.";
-            listFields.SelectedIndexChanged += (s, e) => ShowSelectedField();
-
-            labelFieldName.Font = HeadingFont;
-            labelFieldName.ForeColor = Color.White;
-            labelFieldName.BackColor = BoxColor;
-            labelFieldName.TextAlign = ContentAlignment.MiddleLeft;
-            labelFieldName.AutoEllipsis = true;
-
-            labelFieldInfo.Font = InfoFont;
-            labelFieldInfo.ForeColor = DimText;
-            labelFieldInfo.BackColor = BoxColor;
-            labelFieldInfo.TextAlign = ContentAlignment.MiddleLeft;
-            labelFieldInfo.AutoEllipsis = true;
-
-            preview.EmptyText = "Tap a field to see it here.";
-
-            tileLoad.Wide = true;
-            tileLoad.TileColor = AccentColor;
-            tileLoad.Picture = Keep(Properties.Resources.FileOpen);
-            tileLoad.Title = "Load";
-            tileLoad.Click += (s, e) => OpenSelected(false);
-
-            tileEdit.Wide = true;
-            tileEdit.Picture = Keep(Properties.Resources.Boundary);
-            tileEdit.Title = "Edit";
-            tileEdit.Detail = "boundary";
-            tileEdit.Click += (s, e) => OpenSelected(true);
-
-            pageFields.Controls.Add(tileBack);
-            pageFields.Controls.Add(labelFieldsTitle);
-            pageFields.Controls.Add(tileSort);
-            pageFields.Controls.Add(listFields);
-            pageFields.Controls.Add(labelFieldName);
-            pageFields.Controls.Add(labelFieldInfo);
-            pageFields.Controls.Add(preview);
-            pageFields.Controls.Add(tileLoad);
-            pageFields.Controls.Add(tileEdit);
-
-            ResumeLayout(false);
         }
 
         private Image Keep(Image picture)
@@ -159,53 +141,50 @@ namespace AgOpenGPS.AgOpen
             return picture;
         }
 
-        protected override void OnResize(EventArgs e)
-        {
-            base.OnResize(e);
-            LayoutPages();
-            Invalidate();
-        }
+        #region Layout
 
-        private void LayoutPages()
+        protected override void LayoutElements()
         {
+            // Called from the base constructor's first resize too, before the elements exist.
+            if (tileEdit == null) return;
+
             Rectangle c = ContentRectangle;
-            pageStart.Bounds = c;
-            pageFields.Bounds = c;
-            int w = c.Width, h = c.Height;
+            int x = c.Left, y = c.Top, w = c.Width, h = c.Height;
             if (w < 100 || h < 100) return;
 
             // Start page: hub line on top, two big squares, the Continue bar at the bottom.
-            labelHub.Bounds = new Rectangle(0, 0, w, 30);
-            int continueHeight = Math.Max(64, h / 7);
-            tileContinue.Bounds = new Rectangle(0, h - continueHeight, w, continueHeight);
-            int areaTop = labelHub.Bottom + 10;
-            int areaBottom = tileContinue.Top - 20;
-            int gap = Math.Max(20, w / 28);
-            int side = Math.Max(60, Math.Min((w - gap) / 2, areaBottom - areaTop));
-            int left = (w - (2 * side + gap)) / 2;
+            labelHub.Bounds = new Rectangle(x, y, w, 34);
+            int continueHeight = Math.Max(78, h / 6);
+            tileContinue.Bounds = new Rectangle(x, y + h - continueHeight, w, continueHeight);
+            int areaTop = labelHub.Bounds.Bottom + 10;
+            int areaBottom = tileContinue.Bounds.Top - 22;
+            int gap = Math.Max(22, w / 26);
+            int side = Math.Max(80, Math.Min((w - gap) / 2, areaBottom - areaTop));
+            int left = x + (w - (2 * side + gap)) / 2;
             int top = areaTop + Math.Max(0, (areaBottom - areaTop - side) / 2);
             tileEquipment.Bounds = new Rectangle(left, top, side, side);
             tileFields.Bounds = new Rectangle(left + side + gap, top, side, side);
 
             // Fields page: Back, title and sort along the top; the list on the left;
             // the picked field on the right with Load and Edit under it.
-            int barHeight = 58;
-            tileBack.Bounds = new Rectangle(0, 0, 150, barHeight);
-            tileSort.Bounds = new Rectangle(w - 200, 0, 200, barHeight);
-            labelFieldsTitle.Bounds = new Rectangle(tileBack.Right + 16, 0, Math.Max(0, tileSort.Left - tileBack.Right - 32), barHeight);
-            int bodyTop = barHeight + 14;
-            int listWidth = Math.Max(240, (int)(w * 0.38));
-            listFields.Bounds = new Rectangle(0, bodyTop, listWidth, h - bodyTop);
-            int right = listWidth + 20;
-            int rightWidth = Math.Max(100, w - right);
-            labelFieldName.Bounds = new Rectangle(right, bodyTop, rightWidth, 36);
-            labelFieldInfo.Bounds = new Rectangle(right, labelFieldName.Bottom, rightWidth, 30);
-            int buttonHeight = Math.Max(64, h / 8);
-            int buttonWidth = (rightWidth - 16) / 2;
-            tileLoad.Bounds = new Rectangle(right, h - buttonHeight, buttonWidth, buttonHeight);
-            tileEdit.Bounds = new Rectangle(right + buttonWidth + 16, h - buttonHeight, rightWidth - buttonWidth - 16, buttonHeight);
-            int previewTop = labelFieldInfo.Bottom + 8;
-            preview.Bounds = new Rectangle(right, previewTop, rightWidth, Math.Max(40, tileLoad.Top - 14 - previewTop));
+            const int barHeight = 68;
+            tileBack.Bounds = new Rectangle(x, y, 170, barHeight);
+            tileSort.Bounds = new Rectangle(x + w - 250, y, 250, barHeight);
+            labelFieldsTitle.Bounds = new Rectangle(tileBack.Bounds.Right + 18, y,
+                Math.Max(0, tileSort.Bounds.Left - tileBack.Bounds.Right - 36), barHeight);
+            int bodyTop = y + barHeight + 16;
+            int listWidth = Math.Max(280, (int)(w * 0.40));
+            listFields.Bounds = new Rectangle(x, bodyTop, listWidth, y + h - bodyTop);
+            int right = x + listWidth + 22;
+            int rightWidth = Math.Max(120, x + w - right);
+            labelFieldName.Bounds = new Rectangle(right, bodyTop, rightWidth, 42);
+            labelFieldInfo.Bounds = new Rectangle(right, labelFieldName.Bounds.Bottom, rightWidth, 34);
+            int buttonHeight = Math.Max(78, h / 7);
+            int buttonWidth = (rightWidth - 18) / 2;
+            tileLoad.Bounds = new Rectangle(right, y + h - buttonHeight, buttonWidth, buttonHeight);
+            tileEdit.Bounds = new Rectangle(right + buttonWidth + 18, y + h - buttonHeight, rightWidth - buttonWidth - 18, buttonHeight);
+            int previewTop = labelFieldInfo.Bounds.Bottom + 10;
+            preview.Bounds = new Rectangle(right, previewTop, rightWidth, Math.Max(40, tileLoad.Bounds.Top - 16 - previewTop));
         }
 
         #endregion
@@ -218,17 +197,17 @@ namespace AgOpenGPS.AgOpen
             if (showFields)
             {
                 ReadFields();
-                PlaceOverMap(0.86, 0.86, new Size(720, 480), new Size(1500, 980));
+                PlaceOverMap(0.88, 0.88, new Size(780, 520), new Size(1550, 1000));
             }
             else
             {
                 ShowStartPage();
-                PlaceOverMap(0.60, 0.64, new Size(600, 420), new Size(1000, 700));
+                PlaceOverMap(0.64, 0.70, new Size(660, 480), new Size(1080, 760));
             }
-            pageStart.Visible = !showFields;
-            pageFields.Visible = showFields;
-            LayoutPages();
-            Invalidate();
+            foreach (PopupElement element in startPage) element.Visible = !showFields;
+            foreach (PopupElement element in fieldsPage) element.Visible = showFields;
+            LayoutElements();
+            Redraw();
         }
 
         /// <summary>The hub finished a sync: fields or profiles may have changed.</summary>
@@ -272,8 +251,7 @@ namespace AgOpenGPS.AgOpen
 
         private void ShowHubLine()
         {
-            string text = HubLine();
-            if (labelHub.Text != text) labelHub.Text = text;
+            labelHub.Text = HubLine();
         }
 
         private string HubLine()
@@ -366,7 +344,10 @@ namespace AgOpenGPS.AgOpen
 
             var info = new List<string>();
             info.Add(shape.Fences.Count > 0 ? AgOpenFields.Area(shape.AreaM2, mf.isMetric) : "No boundary yet");
-            if (shape.Tracks.Count > 0) info.Add(shape.Tracks.Count == 1 ? "1 line" : shape.Tracks.Count.ToString(CultureInfo.CurrentCulture) + " lines");
+            if (shape.Tracks.Count > 0)
+            {
+                info.Add(shape.Tracks.Count == 1 ? "1 line" : shape.Tracks.Count.ToString(CultureInfo.CurrentCulture) + " lines");
+            }
             if (here.HasValue)
             {
                 double? distance = AgOpenFields.DistanceFrom(shape, here.Value);
@@ -381,12 +362,6 @@ namespace AgOpenGPS.AgOpen
             preview.ShowField(shape, tractor);
             tileLoad.Enabled = true;
             tileEdit.Enabled = true;
-        }
-
-        private void TileSort_Click(object sender, EventArgs e)
-        {
-            sortNearest = !sortNearest;
-            ReadFields();
         }
 
         #endregion
@@ -417,11 +392,6 @@ namespace AgOpenGPS.AgOpen
                     }
                 }
             }
-        }
-
-        private void TileContinue_Click(object sender, EventArgs e)
-        {
-            OpenField(continueFolder, false);
         }
 
         private void OpenSelected(bool editBoundary)

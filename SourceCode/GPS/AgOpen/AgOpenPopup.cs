@@ -3,43 +3,66 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Drawing.Text;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace AgOpenGPS.AgOpen
 {
     /// <summary>
-    /// The look shared by the AgOpen pop-ups: a see-through dark box with white
-    /// lettering over the map, with a thin edge line that can carry a short note
-    /// (and later a countdown). A touch anywhere outside the box closes it and
-    /// goes back to the map; that touch does nothing else.
+    /// The look shared by the AgOpen pop-ups, made for a tablet in a tractor cab:
+    /// a light, see-through box with rounded corners over the map, solid buttons,
+    /// and large dark lettering that stays readable in bright sun.
+    ///
+    /// The whole pop-up is drawn as one picture that has its own see-through
+    /// amount for every pixel (a Windows "layered window"). That's what lets the
+    /// box be see-through while the buttons and text stay solid. The buttons and
+    /// lists are drawn by the pop-up itself (PopupElement), not Windows controls.
+    ///
+    /// A touch anywhere outside the box closes it and goes back to the map; that
+    /// touch does nothing else.
     /// </summary>
     public class AgOpenPopup : Form, IMessageFilter
     {
-        public static readonly Color BoxColor = Color.FromArgb(18, 20, 22);
-        public static readonly Color ListColor = Color.FromArgb(32, 35, 38);
-        public static readonly Color TileColor = Color.FromArgb(50, 54, 58);
-        public static readonly Color TilePressedColor = Color.FromArgb(90, 96, 102);
-        public static readonly Color AccentColor = Color.FromArgb(34, 96, 58);
-        public static readonly Color SelectedColor = Color.FromArgb(40, 112, 70);
-        public static readonly Color EdgeColor = Color.FromArgb(170, 175, 180);
-        public static readonly Color DimText = Color.FromArgb(185, 190, 195);
-        public static readonly Color DisabledText = Color.FromArgb(105, 110, 115);
+        // Light colours with strong contrast, for use in bright sun.
+        public static readonly Color BoxColor = Color.FromArgb(168, 234, 237, 240);
+        public static readonly Color BoxEdgeColor = Color.FromArgb(120, 126, 132);
+        public static readonly Color BoxEdgeDim = Color.FromArgb(200, 204, 208);
+        public static readonly Color CountdownColor = Color.FromArgb(30, 115, 55);
+        public static readonly Color TextColor = Color.FromArgb(18, 22, 26);
+        public static readonly Color DimText = Color.FromArgb(70, 76, 82);
+        public static readonly Color DisabledText = Color.FromArgb(150, 155, 160);
+        public static readonly Color TileColor = Color.White;
+        public static readonly Color TileEdge = Color.FromArgb(150, 156, 162);
+        public static readonly Color TilePressedColor = Color.FromArgb(200, 207, 214);
+        public static readonly Color TileDisabledColor = Color.FromArgb(232, 235, 238);
+        public static readonly Color AccentColor = Color.FromArgb(30, 115, 55);
+        public static readonly Color AccentPressedColor = Color.FromArgb(18, 78, 36);
+        public static readonly Color AccentText = Color.White;
+        public static readonly Color PanelColor = Color.White;
+        public static readonly Color PanelLine = Color.FromArgb(218, 222, 226);
 
-        public static readonly Font NoteFont = new Font("Tahoma", 10.5F);
-        public static readonly Font SmallFont = new Font("Tahoma", 11.25F);
-        public static readonly Font InfoFont = new Font("Tahoma", 12F);
-        public static readonly Font ListFont = new Font("Tahoma", 15.75F);
-        public static readonly Font TitleFont = new Font("Tahoma", 16F, FontStyle.Bold);
-        public static readonly Font HeadingFont = new Font("Tahoma", 18F, FontStyle.Bold);
+        // About a quarter bigger than AgOpenGPS's usual lettering: the tablet is
+        // further from your face in a cab dock.
+        public static readonly Font NoteFont = new Font("Tahoma", 12.75F);
+        public static readonly Font SmallFont = new Font("Tahoma", 14F);
+        public static readonly Font InfoFont = new Font("Tahoma", 15F);
+        public static readonly Font ListFont = new Font("Tahoma", 18F);
+        public static readonly Font TitleFont = new Font("Tahoma", 20F, FontStyle.Bold);
+        public static readonly Font HeadingFont = new Font("Tahoma", 22F, FontStyle.Bold);
 
-        /// <summary>How much of the map shows through (1 = solid).</summary>
-        public const double BoxOpacity = 0.88;
+        /// <summary>Room around the box for its soft shadow.</summary>
+        protected const int ShadowSize = 12;
 
-        /// <summary>Distance from the window edge to the edge line.</summary>
-        protected const int EdgeInset = 12;
+        /// <summary>How round the box corners are.</summary>
+        protected const int BoxRadius = 24;
 
         protected readonly FormGPS mf;
+        protected readonly List<PopupElement> Elements = new List<PopupElement>();
 
+        private PopupElement touched;
+        private Bitmap canvas;
+        private bool redrawPending;
         private bool filtering;
         private string edgeNote = "";
         private double edgeShare = 1.0;
@@ -48,53 +71,80 @@ namespace AgOpenGPS.AgOpen
         {
             this.mf = mf;
             AutoScaleMode = AutoScaleMode.None;
-            BackColor = BoxColor;
-            ForeColor = Color.White;
-            Font = new Font("Tahoma", 14.25F);
             FormBorderStyle = FormBorderStyle.None;
             KeyPreview = true;
-            Opacity = BoxOpacity;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
-            DoubleBuffered = true;
+            Text = "AgOpen";
         }
 
-        /// <summary>Small text set into the bottom edge line, e.g. "Touch anywhere else to go to the map".</summary>
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= Native.WS_EX_LAYERED;
+                return cp;
+            }
+        }
+
+        /// <summary>Small text set into the bottom edge of the box, e.g. "Touch anywhere else to go to the map".</summary>
         public string EdgeNote
         {
             get { return edgeNote; }
-            set { edgeNote = value ?? ""; Invalidate(); }
+            set { edgeNote = value ?? ""; Redraw(); }
         }
 
         /// <summary>
-        /// How much of the edge line is drawn bright, 0..1 (for a countdown).
-        /// The rest is drawn dim.
+        /// How much of the box edge is drawn in green, 0..1, going round clockwise
+        /// from the top middle (for a countdown). 1 = a plain grey edge.
         /// </summary>
         public double EdgeShare
         {
             get { return edgeShare; }
-            set { edgeShare = Math.Max(0.0, Math.Min(1.0, value)); Invalidate(); }
+            set { edgeShare = Math.Max(0.0, Math.Min(1.0, value)); Redraw(); }
         }
 
-        /// <summary>The inside of the box, where the controls go.</summary>
+        /// <summary>The box itself (inside the shadow).</summary>
+        protected Rectangle BoxRectangle
+        {
+            get { return new Rectangle(ShadowSize, ShadowSize, Math.Max(0, Width - 2 * ShadowSize - 1), Math.Max(0, Height - 2 * ShadowSize - 1)); }
+        }
+
+        /// <summary>The inside of the box, where the buttons and text go.</summary>
         protected Rectangle ContentRectangle
         {
             get
             {
-                int side = EdgeInset + 16;
-                int bottom = EdgeInset + (edgeNote.Length > 0 ? 22 : 16);
-                return new Rectangle(side, side, Math.Max(0, ClientSize.Width - 2 * side), Math.Max(0, ClientSize.Height - side - bottom));
+                Rectangle box = BoxRectangle;
+                const int pad = 24;
+                int bottom = pad + (edgeNote.Length > 0 ? 14 : 0);
+                return new Rectangle(box.Left + pad, box.Top + pad, Math.Max(0, box.Width - 2 * pad), Math.Max(0, box.Height - pad - bottom));
             }
         }
 
-        /// <summary>Size the box as a share of the AgOpenGPS window and centre it there.</summary>
+        /// <summary>Add a button, list or text to the pop-up.</summary>
+        protected T Add<T>(T element) where T : PopupElement
+        {
+            element.Popup = this;
+            Elements.Add(element);
+            Redraw();
+            return element;
+        }
+
+        /// <summary>Put the buttons and text in place for the current size.</summary>
+        protected virtual void LayoutElements()
+        {
+        }
+
+        /// <summary>Size the pop-up as a share of the AgOpenGPS window and centre it there.</summary>
         protected void PlaceOverMap(double widthShare, double heightShare, Size smallest, Size largest)
         {
             Rectangle area = mf.RectangleToScreen(mf.ClientRectangle);
             int width = Clamp((int)(area.Width * widthShare), smallest.Width, largest.Width);
             int height = Clamp((int)(area.Height * heightShare), smallest.Height, largest.Height);
-            width = Math.Min(width, Math.Max(200, area.Width - 16));
-            height = Math.Min(height, Math.Max(150, area.Height - 16));
+            width = Math.Min(width, Math.Max(200, area.Width - 8));
+            height = Math.Min(height, Math.Max(150, area.Height - 8));
             Bounds = new Rectangle(area.Left + (area.Width - width) / 2, area.Top + (area.Height - height) / 2, width, height);
         }
 
@@ -110,6 +160,363 @@ namespace AgOpenGPS.AgOpen
         {
             Close();
         }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            LayoutElements();
+            Redraw();
+        }
+
+        #region Drawing
+
+        /// <summary>Draw the pop-up again soon (several requests make one drawing).</summary>
+        public void Redraw()
+        {
+            if (redrawPending || IsDisposed) return;
+            redrawPending = true;
+            if (IsHandleCreated) BeginInvoke(new Action(DrawNow));
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            DrawNow();
+        }
+
+        private void DrawNow()
+        {
+            redrawPending = false;
+            if (IsDisposed || !IsHandleCreated) return;
+            int width = Width, height = Height;
+            if (width < 4 || height < 4) return;
+
+            if (canvas == null || canvas.Width != width || canvas.Height != height)
+            {
+                if (canvas != null) canvas.Dispose();
+                canvas = new Bitmap(width, height, PixelFormat.Format32bppPArgb);
+            }
+
+            using (Graphics g = Graphics.FromImage(canvas))
+            {
+                g.Clear(Color.Transparent);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+
+                PaintBox(g);
+                foreach (PopupElement element in Elements)
+                {
+                    if (!element.Visible || element.Bounds.Width <= 0 || element.Bounds.Height <= 0) continue;
+                    GraphicsState state = g.Save();
+                    g.SetClip(element.Bounds);
+                    element.Paint(g);
+                    g.Restore(state);
+                }
+                PaintEdgeNote(g);
+            }
+            Present(canvas);
+        }
+
+        private void PaintBox(Graphics g)
+        {
+            Rectangle box = BoxRectangle;
+            if (box.Width < 2 * BoxRadius || box.Height < 2 * BoxRadius) return;
+
+            // Soft shadow: rings outside the box, darker close to it.
+            using (GraphicsPath inner = RoundedRectangle(box, BoxRadius))
+            {
+                for (int grow = 2; grow <= ShadowSize; grow += 2)
+                {
+                    Rectangle outer = Rectangle.Inflate(box, grow, grow);
+                    using (GraphicsPath ring = RoundedRectangle(outer, BoxRadius + grow))
+                    using (var brush = new SolidBrush(Color.FromArgb(9, 0, 0, 0)))
+                    {
+                        ring.AddPath(inner, false);
+                        ring.FillMode = FillMode.Alternate;
+                        g.FillPath(brush, ring);
+                    }
+                }
+
+                using (var fill = new SolidBrush(BoxColor))
+                {
+                    g.FillPath(fill, inner);
+                }
+
+                if (edgeShare >= 1.0)
+                {
+                    using (var pen = new Pen(BoxEdgeColor, 2.5f))
+                    {
+                        g.DrawPath(pen, inner);
+                    }
+                }
+                else
+                {
+                    using (var dim = new Pen(BoxEdgeDim, 3f))
+                    using (var bright = new Pen(CountdownColor, 5f))
+                    {
+                        g.DrawPath(dim, inner);
+                        PointF[] part = EdgePart(box, BoxRadius, edgeShare);
+                        if (part.Length > 1) g.DrawLines(bright, part);
+                    }
+                }
+            }
+        }
+
+        // The note sits on the bottom edge, on a small solid label so it's easy to read.
+        private void PaintEdgeNote(Graphics g)
+        {
+            if (edgeNote.Length == 0) return;
+            Rectangle box = BoxRectangle;
+            Size size = MeasureText(g, edgeNote, NoteFont, Math.Max(10, box.Width - 40), false);
+            int width = Math.Min(box.Width - 40, size.Width + 28);
+            int height = size.Height + 10;
+            var label = new Rectangle(box.Left + (box.Width - width) / 2, box.Bottom - height / 2, width, height);
+            using (GraphicsPath path = RoundedRectangle(label, height / 2))
+            using (var fill = new SolidBrush(Color.FromArgb(245, 250, 251, 252)))
+            using (var pen = new Pen(BoxEdgeColor, 1.5f))
+            {
+                g.FillPath(fill, path);
+                g.DrawPath(pen, path);
+            }
+            DrawText(g, edgeNote, NoteFont, DimText, label, StringAlignment.Center, StringAlignment.Center, false);
+        }
+
+        // The first share of the box edge, clockwise from the top middle.
+        private static PointF[] EdgePart(Rectangle r, int radius, double share)
+        {
+            PointF[] points;
+            using (var path = new GraphicsPath())
+            {
+                int d = Math.Max(2, Math.Min(radius * 2, Math.Min(r.Width, r.Height)));
+                float middle = r.Left + r.Width / 2f;
+                path.AddLine(middle, r.Top, r.Right - d / 2f, r.Top);
+                path.AddArc(r.Right - d, r.Top, d, d, 270, 90);
+                path.AddLine(r.Right, r.Top + d / 2f, r.Right, r.Bottom - d / 2f);
+                path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+                path.AddLine(r.Right - d / 2f, r.Bottom, r.Left + d / 2f, r.Bottom);
+                path.AddArc(r.Left, r.Bottom - d, d, d, 90, 90);
+                path.AddLine(r.Left, r.Bottom - d / 2f, r.Left, r.Top + d / 2f);
+                path.AddArc(r.Left, r.Top, d, d, 180, 90);
+                path.AddLine(r.Left + d / 2f, r.Top, middle, r.Top);
+                path.Flatten();
+                points = path.PathPoints;
+            }
+
+            double total = 0;
+            for (int i = 1; i < points.Length; i++) total += Length(points[i - 1], points[i]);
+            double left = total * share;
+            var part = new List<PointF> { points[0] };
+            for (int i = 1; i < points.Length && left > 0; i++)
+            {
+                double length = Length(points[i - 1], points[i]);
+                if (length <= left)
+                {
+                    part.Add(points[i]);
+                    left -= length;
+                }
+                else
+                {
+                    double t = left / length;
+                    part.Add(new PointF((float)(points[i - 1].X + (points[i].X - points[i - 1].X) * t),
+                        (float)(points[i - 1].Y + (points[i].Y - points[i - 1].Y) * t)));
+                    left = 0;
+                }
+            }
+            return part.ToArray();
+        }
+
+        private static double Length(PointF a, PointF b)
+        {
+            double dx = b.X - a.X, dy = b.Y - a.Y;
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        // Hand the finished picture to Windows, with its see-through amounts.
+        private void Present(Bitmap bitmap)
+        {
+            IntPtr screen = Native.GetDC(IntPtr.Zero);
+            IntPtr memory = Native.CreateCompatibleDC(screen);
+            IntPtr picture = IntPtr.Zero;
+            IntPtr previous = IntPtr.Zero;
+            try
+            {
+                picture = bitmap.GetHbitmap(Color.FromArgb(0));
+                previous = Native.SelectObject(memory, picture);
+                var size = new Native.SIZE(bitmap.Width, bitmap.Height);
+                var source = new Native.POINT(0, 0);
+                var position = new Native.POINT(Left, Top);
+                var blend = new Native.BLENDFUNCTION
+                {
+                    BlendOp = Native.AC_SRC_OVER,
+                    BlendFlags = 0,
+                    SourceConstantAlpha = 255,
+                    AlphaFormat = Native.AC_SRC_ALPHA
+                };
+                Native.UpdateLayeredWindow(Handle, screen, ref position, ref size, memory, ref source, 0, ref blend, Native.ULW_ALPHA);
+            }
+            finally
+            {
+                Native.ReleaseDC(IntPtr.Zero, screen);
+                if (picture != IntPtr.Zero)
+                {
+                    Native.SelectObject(memory, previous);
+                    Native.DeleteObject(picture);
+                }
+                Native.DeleteDC(memory);
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && canvas != null)
+            {
+                canvas.Dispose();
+                canvas = null;
+            }
+            base.Dispose(disposing);
+        }
+
+        #endregion
+
+        #region Drawing helpers
+
+        /// <summary>A rectangle with rounded corners.</summary>
+        public static GraphicsPath RoundedRectangle(Rectangle r, int radius)
+        {
+            var path = new GraphicsPath();
+            int d = Math.Max(2, Math.Min(radius * 2, Math.Min(r.Width, r.Height)));
+            path.AddArc(r.Left, r.Top, d, d, 180, 90);
+            path.AddArc(r.Right - d, r.Top, d, d, 270, 90);
+            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            path.AddArc(r.Left, r.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
+
+        private static StringFormat TextFormat(StringAlignment horizontal, StringAlignment vertical, bool wrap)
+        {
+            var format = new StringFormat
+            {
+                Alignment = horizontal,
+                LineAlignment = vertical,
+                Trimming = StringTrimming.EllipsisCharacter
+            };
+            // Wrapped text shows whole lines only; a single line is never hidden, at worst trimmed.
+            format.FormatFlags = wrap ? StringFormatFlags.LineLimit : StringFormatFlags.NoWrap;
+            return format;
+        }
+
+        /// <summary>Draw text in a box, cut short with "..." if it doesn't fit.</summary>
+        public static void DrawText(Graphics g, string text, Font font, Color color, Rectangle box,
+            StringAlignment horizontal, StringAlignment vertical, bool wrap)
+        {
+            if (string.IsNullOrEmpty(text) || box.Width <= 0 || box.Height <= 0) return;
+            using (StringFormat format = TextFormat(horizontal, vertical, wrap))
+            using (var brush = new SolidBrush(color))
+            {
+                g.DrawString(text, font, brush, box, format);
+            }
+        }
+
+        /// <summary>How much room text needs, up to the given width.</summary>
+        public static Size MeasureText(Graphics g, string text, Font font, int width, bool wrap)
+        {
+            if (string.IsNullOrEmpty(text) || width <= 0) return Size.Empty;
+            using (StringFormat format = TextFormat(StringAlignment.Near, StringAlignment.Near, wrap))
+            {
+                return Size.Ceiling(g.MeasureString(text, font, width, format));
+            }
+        }
+
+        /// <summary>Draw a picture as large as fits in the box (up to twice its size), centred.</summary>
+        public static void DrawPicture(Graphics g, Image picture, Rectangle box, bool dim)
+        {
+            if (picture == null || box.Width <= 0 || box.Height <= 0) return;
+            double scale = Math.Min(2.0, Math.Min((double)box.Width / picture.Width, (double)box.Height / picture.Height));
+            int width = Math.Max(1, (int)(picture.Width * scale));
+            int height = Math.Max(1, (int)(picture.Height * scale));
+            var target = new Rectangle(box.Left + (box.Width - width) / 2, box.Top + (box.Height - height) / 2, width, height);
+            if (!dim)
+            {
+                g.DrawImage(picture, target);
+                return;
+            }
+            using (var attributes = new ImageAttributes())
+            {
+                var matrix = new ColorMatrix { Matrix33 = 0.35f };
+                attributes.SetColorMatrix(matrix);
+                g.DrawImage(picture, target, 0, 0, picture.Width, picture.Height, GraphicsUnit.Pixel, attributes);
+            }
+        }
+
+        #endregion
+
+        #region Touch
+
+        private PopupElement ElementAt(Point point)
+        {
+            for (int i = Elements.Count - 1; i >= 0; i--)
+            {
+                PopupElement element = Elements[i];
+                if (element.Visible && element.Enabled && element.Bounds.Contains(point)) return element;
+            }
+            return null;
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left) return;
+            touched = ElementAt(e.Location);
+            if (touched != null) touched.TouchDown(e.Location);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (touched != null) touched.TouchMove(e.Location);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button != MouseButtons.Left || touched == null) return;
+            PopupElement element = touched;
+            touched = null;
+            element.TouchUp(e.Location, element.Bounds.Contains(e.Location));
+        }
+
+        protected override void OnMouseCaptureChanged(EventArgs e)
+        {
+            base.OnMouseCaptureChanged(e);
+            if (touched == null) return;
+            // Lost the finger without a release (e.g. another window opened): cancel.
+            PopupElement element = touched;
+            touched = null;
+            element.TouchUp(new Point(-10000, -10000), false);
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            base.OnMouseWheel(e);
+            PopupElement element = ElementAt(e.Location);
+            if (element != null) element.Wheel(e.Delta);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Escape)
+            {
+                e.Handled = true;
+                Close();
+                return;
+            }
+            base.OnKeyDown(e);
+        }
+
+        #endregion
 
         #region Touch outside the box
 
@@ -173,161 +580,192 @@ namespace AgOpenGPS.AgOpen
             base.OnFormClosed(e);
         }
 
-        protected override void OnKeyDown(KeyEventArgs e)
-        {
-            if (e.KeyCode == Keys.Escape)
-            {
-                e.Handled = true;
-                Close();
-                return;
-            }
-            base.OnKeyDown(e);
-        }
-
         #endregion
 
-        #region Drawing
-
-        protected override void OnPaint(PaintEventArgs e)
+        private static class Native
         {
-            base.OnPaint(e);
-            Graphics g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
+            public const int WS_EX_LAYERED = 0x00080000;
+            public const int ULW_ALPHA = 0x00000002;
+            public const byte AC_SRC_OVER = 0x00;
+            public const byte AC_SRC_ALPHA = 0x01;
 
-            var edge = new Rectangle(EdgeInset, EdgeInset, ClientSize.Width - 2 * EdgeInset - 1, ClientSize.Height - 2 * EdgeInset - 1);
-            if (edge.Width < 10 || edge.Height < 10) return;
-
-            using (var dim = new Pen(Color.FromArgb(70, 74, 78), 3f))
-            using (var bright = new Pen(EdgeColor, 3f))
+            [StructLayout(LayoutKind.Sequential)]
+            public struct POINT
             {
-                if (edgeShare >= 1.0)
+                public int X;
+                public int Y;
+
+                public POINT(int x, int y)
                 {
-                    g.DrawRectangle(bright, edge);
-                }
-                else
-                {
-                    g.DrawRectangle(dim, edge);
-                    DrawEdgeShare(g, bright, edge, edgeShare);
+                    X = x;
+                    Y = y;
                 }
             }
 
-            if (edgeNote.Length > 0)
+            [StructLayout(LayoutKind.Sequential)]
+            public struct SIZE
             {
-                Size size = TextRenderer.MeasureText(g, edgeNote, NoteFont);
-                var noteBox = new Rectangle((ClientSize.Width - size.Width) / 2 - 10, edge.Bottom - size.Height / 2,
-                    size.Width + 20, size.Height);
-                using (var brush = new SolidBrush(BackColor))
+                public int CX;
+                public int CY;
+
+                public SIZE(int cx, int cy)
                 {
-                    g.FillRectangle(brush, noteBox);
+                    CX = cx;
+                    CY = cy;
                 }
-                TextRenderer.DrawText(g, edgeNote, NoteFont, noteBox, DimText,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             }
+
+            [StructLayout(LayoutKind.Sequential, Pack = 1)]
+            public struct BLENDFUNCTION
+            {
+                public byte BlendOp;
+                public byte BlendFlags;
+                public byte SourceConstantAlpha;
+                public byte AlphaFormat;
+            }
+
+            [DllImport("user32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize,
+                IntPtr hdcSrc, ref POINT pptSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
+
+            [DllImport("user32.dll")]
+            public static extern IntPtr GetDC(IntPtr hWnd);
+
+            [DllImport("user32.dll")]
+            public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+            [DllImport("gdi32.dll", SetLastError = true)]
+            public static extern IntPtr CreateCompatibleDC(IntPtr hDC);
+
+            [DllImport("gdi32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool DeleteDC(IntPtr hdc);
+
+            [DllImport("gdi32.dll")]
+            public static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);
+
+            [DllImport("gdi32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool DeleteObject(IntPtr hObject);
         }
-
-        // Draw the first share of the edge, clockwise from the top middle.
-        private static void DrawEdgeShare(Graphics g, Pen pen, Rectangle r, double share)
-        {
-            float middle = r.Left + r.Width / 2f;
-            var corners = new List<PointF>
-            {
-                new PointF(middle, r.Top),
-                new PointF(r.Right, r.Top),
-                new PointF(r.Right, r.Bottom),
-                new PointF(r.Left, r.Bottom),
-                new PointF(r.Left, r.Top),
-                new PointF(middle, r.Top)
-            };
-            double total = 2.0 * (r.Width + r.Height);
-            double left = total * share;
-            var points = new List<PointF> { corners[0] };
-            for (int i = 1; i < corners.Count && left > 0; i++)
-            {
-                PointF a = corners[i - 1];
-                PointF b = corners[i];
-                double length = Math.Abs(b.X - a.X) + Math.Abs(b.Y - a.Y);
-                if (length <= left)
-                {
-                    points.Add(b);
-                    left -= length;
-                }
-                else
-                {
-                    double t = left / length;
-                    points.Add(new PointF((float)(a.X + (b.X - a.X) * t), (float)(a.Y + (b.Y - a.Y) * t)));
-                    left = 0;
-                }
-            }
-            if (points.Count > 1) g.DrawLines(pen, points.ToArray());
-        }
-
-        /// <summary>A rectangle with rounded corners.</summary>
-        public static GraphicsPath RoundedRectangle(Rectangle r, int radius)
-        {
-            var path = new GraphicsPath();
-            int d = Math.Max(2, Math.Min(radius * 2, Math.Min(r.Width, r.Height)));
-            path.AddArc(r.Left, r.Top, d, d, 180, 90);
-            path.AddArc(r.Right - d, r.Top, d, d, 270, 90);
-            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-            path.AddArc(r.Left, r.Bottom - d, d, d, 90, 90);
-            path.CloseFigure();
-            return path;
-        }
-
-        /// <summary>Draw a picture as large as fits in the box (up to twice its size), centred.</summary>
-        public static void DrawPicture(Graphics g, Image picture, Rectangle box, bool dim)
-        {
-            if (picture == null || box.Width <= 0 || box.Height <= 0) return;
-            double scale = Math.Min(2.0, Math.Min((double)box.Width / picture.Width, (double)box.Height / picture.Height));
-            int width = Math.Max(1, (int)(picture.Width * scale));
-            int height = Math.Max(1, (int)(picture.Height * scale));
-            var target = new Rectangle(box.Left + (box.Width - width) / 2, box.Top + (box.Height - height) / 2, width, height);
-
-            InterpolationMode before = g.InterpolationMode;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            if (!dim)
-            {
-                g.DrawImage(picture, target);
-            }
-            else
-            {
-                using (var attributes = new ImageAttributes())
-                {
-                    var matrix = new ColorMatrix { Matrix33 = 0.35f };
-                    attributes.SetColorMatrix(matrix);
-                    g.DrawImage(picture, target, 0, 0, picture.Width, picture.Height, GraphicsUnit.Pixel, attributes);
-                }
-            }
-            g.InterpolationMode = before;
-        }
-
-        #endregion
     }
 
     /// <summary>
-    /// A big touch button for the pop-ups: a picture, a bold title and a smaller
-    /// line under it. Square tiles put the picture on top; wide ones (Wide = true)
-    /// put the text on the left and the picture on the right.
+    /// Something drawn inside a pop-up that may react to touch: a button, a list,
+    /// a line of text. Positions are in pop-up pixels.
     /// </summary>
-    public class PopupTile : Control
+    public abstract class PopupElement
+    {
+        private Rectangle bounds;
+        private bool visible = true;
+        private bool enabled = true;
+
+        internal AgOpenPopup Popup { get; set; }
+
+        public Rectangle Bounds
+        {
+            get { return bounds; }
+            set
+            {
+                if (bounds == value) return;
+                bounds = value;
+                Invalidate();
+            }
+        }
+
+        public bool Visible
+        {
+            get { return visible; }
+            set
+            {
+                if (visible == value) return;
+                visible = value;
+                Invalidate();
+            }
+        }
+
+        public bool Enabled
+        {
+            get { return enabled; }
+            set
+            {
+                if (enabled == value) return;
+                enabled = value;
+                Invalidate();
+            }
+        }
+
+        /// <summary>Ask for the pop-up to be drawn again.</summary>
+        public void Invalidate()
+        {
+            if (Popup != null) Popup.Redraw();
+        }
+
+        /// <summary>Draw inside Bounds.</summary>
+        public abstract void Paint(Graphics g);
+
+        /// <summary>A finger went down on this element.</summary>
+        public virtual void TouchDown(Point point)
+        {
+        }
+
+        /// <summary>The finger that went down on this element moved (it may be outside it now).</summary>
+        public virtual void TouchMove(Point point)
+        {
+        }
+
+        /// <summary>The finger lifted. inside: it was still on this element.</summary>
+        public virtual void TouchUp(Point point, bool inside)
+        {
+        }
+
+        public virtual void Wheel(int delta)
+        {
+        }
+    }
+
+    /// <summary>A line (or a few lines) of text.</summary>
+    public class PopupLabel : PopupElement
+    {
+        private string text = "";
+
+        public string Text
+        {
+            get { return text; }
+            set
+            {
+                string newText = value ?? "";
+                if (text == newText) return;
+                text = newText;
+                Invalidate();
+            }
+        }
+
+        public Font Font { get; set; } = AgOpenPopup.InfoFont;
+        public Color ForeColor { get; set; } = AgOpenPopup.TextColor;
+        public StringAlignment Alignment { get; set; } = StringAlignment.Near;
+        public bool Wrap { get; set; }
+
+        public override void Paint(Graphics g)
+        {
+            AgOpenPopup.DrawText(g, text, Font, ForeColor, Bounds, Alignment, StringAlignment.Center, Wrap);
+        }
+    }
+
+    /// <summary>
+    /// A big solid touch button: a picture, a bold title and a smaller line under
+    /// it. Square tiles put the picture on top; wide ones (Wide = true) put the text
+    /// on the left and the picture on the right. Accent = the green main action.
+    /// </summary>
+    public class PopupTile : PopupElement
     {
         private Image picture;
         private string title = "";
         private string detail = "";
         private bool pressed;
 
-        public PopupTile()
-        {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
-                | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            SetStyle(ControlStyles.Selectable, false);
-            BackColor = AgOpenPopup.BoxColor;
-            ForeColor = Color.White;
-            TileColor = AgOpenPopup.TileColor;
-            TitleFont = AgOpenPopup.TitleFont;
-            DetailFont = AgOpenPopup.SmallFont;
-            Cursor = Cursors.Hand;
-        }
+        public event EventHandler Click;
 
         public Image Picture
         {
@@ -347,116 +785,111 @@ namespace AgOpenGPS.AgOpen
             set { detail = value ?? ""; Invalidate(); }
         }
 
-        public Color TileColor { get; set; }
-        public Font TitleFont { get; set; }
-        public Font DetailFont { get; set; }
-
-        /// <summary>Text on the left, picture on the right (for long bars).</summary>
+        public bool Accent { get; set; }
         public bool Wide { get; set; }
+        public Font TitleFont { get; set; } = AgOpenPopup.TitleFont;
+        public Font DetailFont { get; set; } = AgOpenPopup.SmallFont;
 
-        protected override void OnMouseDown(MouseEventArgs e)
+        public override void TouchDown(Point point)
         {
             pressed = true;
             Invalidate();
-            base.OnMouseDown(e);
         }
 
-        protected override void OnMouseUp(MouseEventArgs e)
+        public override void TouchMove(Point point)
         {
+            bool inside = Bounds.Contains(point);
+            if (inside == pressed) return;
+            pressed = inside;
+            Invalidate();
+        }
+
+        public override void TouchUp(Point point, bool inside)
+        {
+            bool wasPressed = pressed;
             pressed = false;
             Invalidate();
-            base.OnMouseUp(e);
+            if (inside && wasPressed && Enabled && Visible) Click?.Invoke(this, EventArgs.Empty);
         }
 
-        protected override void OnMouseLeave(EventArgs e)
+        public override void Paint(Graphics g)
         {
-            pressed = false;
-            Invalidate();
-            base.OnMouseLeave(e);
-        }
+            Rectangle r = Bounds;
+            var shape = new Rectangle(r.Left + 1, r.Top + 1, r.Width - 3, r.Height - 3);
+            if (shape.Width < 8 || shape.Height < 8) return;
 
-        protected override void OnEnabledChanged(EventArgs e)
-        {
-            Invalidate();
-            base.OnEnabledChanged(e);
-        }
+            Color fill;
+            if (!Enabled) fill = AgOpenPopup.TileDisabledColor;
+            else if (Accent) fill = pressed ? AgOpenPopup.AccentPressedColor : AgOpenPopup.AccentColor;
+            else fill = pressed ? AgOpenPopup.TilePressedColor : AgOpenPopup.TileColor;
 
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            Graphics g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(BackColor);
-            if (Width < 8 || Height < 8) return;
-
-            var r = new Rectangle(1, 1, Width - 3, Height - 3);
-            Color fill = !Enabled ? Color.FromArgb(34, 37, 40) : pressed ? AgOpenPopup.TilePressedColor : TileColor;
-            using (GraphicsPath path = AgOpenPopup.RoundedRectangle(r, Math.Min(14, Height / 5)))
+            using (GraphicsPath path = AgOpenPopup.RoundedRectangle(shape, Math.Min(16, shape.Height / 4)))
             using (var brush = new SolidBrush(fill))
-            using (var pen = new Pen(Enabled ? AgOpenPopup.EdgeColor : Color.FromArgb(80, 84, 88), 1.5f))
+            using (var pen = new Pen(Enabled && Accent ? AgOpenPopup.AccentPressedColor : AgOpenPopup.TileEdge, 1.5f))
             {
                 g.FillPath(brush, path);
                 g.DrawPath(pen, path);
             }
 
-            Color titleColor = Enabled ? ForeColor : AgOpenPopup.DisabledText;
-            Color detailColor = Enabled ? AgOpenPopup.DimText : AgOpenPopup.DisabledText;
-            if (Wide) PaintWide(g, titleColor, detailColor);
-            else PaintSquare(g, titleColor, detailColor);
+            Color titleColor = !Enabled ? AgOpenPopup.DisabledText : Accent ? AgOpenPopup.AccentText : AgOpenPopup.TextColor;
+            Color detailColor = !Enabled ? AgOpenPopup.DisabledText : Accent ? AgOpenPopup.AccentText : AgOpenPopup.DimText;
+            if (Wide) PaintWide(g, shape, titleColor, detailColor);
+            else PaintSquare(g, shape, titleColor, detailColor);
         }
 
-        private void PaintSquare(Graphics g, Color titleColor, Color detailColor)
+        private void PaintSquare(Graphics g, Rectangle r, Color titleColor, Color detailColor)
         {
-            int pad = Math.Max(10, Height / 12);
-            int textWidth = Width - 2 * pad;
-            const TextFormatFlags flags = TextFormatFlags.HorizontalCenter | TextFormatFlags.WordBreak
-                | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis;
-
-            int pictureHeight = picture != null ? (int)(Height * 0.34) : 0;
-            Size titleSize = title.Length > 0 ? TextRenderer.MeasureText(g, title, TitleFont, new Size(textWidth, int.MaxValue), flags) : Size.Empty;
-            Size detailSize = detail.Length > 0 ? TextRenderer.MeasureText(g, detail, DetailFont, new Size(textWidth, int.MaxValue), flags) : Size.Empty;
+            int pad = Math.Max(12, r.Height / 12);
+            int textWidth = r.Width - 2 * pad;
+            int pictureHeight = picture != null ? (int)(r.Height * 0.30) : 0;
+            Size titleSize = AgOpenPopup.MeasureText(g, title, TitleFont, textWidth, true);
+            Size detailSize = AgOpenPopup.MeasureText(g, detail, DetailFont, textWidth, true);
             int gap = pad / 2;
             int total = pictureHeight + (pictureHeight > 0 ? gap : 0) + titleSize.Height + (detailSize.Height > 0 ? gap + detailSize.Height : 0);
-            int top = Math.Max(pad, (Height - total) / 2);
+            int top = r.Top + Math.Max(pad, (r.Height - total) / 2);
 
             if (pictureHeight > 0)
             {
-                AgOpenPopup.DrawPicture(g, picture, new Rectangle(pad, top, textWidth, pictureHeight), !Enabled);
+                AgOpenPopup.DrawPicture(g, picture, new Rectangle(r.Left + pad, top, textWidth, pictureHeight), !Enabled);
                 top += pictureHeight + gap;
             }
             if (titleSize.Height > 0)
             {
-                TextRenderer.DrawText(g, title, TitleFont, new Rectangle(pad, top, textWidth, titleSize.Height), titleColor, flags);
+                AgOpenPopup.DrawText(g, title, TitleFont, titleColor, new Rectangle(r.Left + pad, top, textWidth, titleSize.Height),
+                    StringAlignment.Center, StringAlignment.Near, true);
                 top += titleSize.Height + gap;
             }
             if (detailSize.Height > 0)
             {
-                int height = Math.Max(0, Math.Min(detailSize.Height, Height - pad - top));
-                TextRenderer.DrawText(g, detail, DetailFont, new Rectangle(pad, top, textWidth, height), detailColor, flags);
+                int height = Math.Max(0, Math.Min(detailSize.Height, r.Bottom - pad / 2 - top));
+                AgOpenPopup.DrawText(g, detail, DetailFont, detailColor, new Rectangle(r.Left + pad, top, textWidth, height),
+                    StringAlignment.Center, StringAlignment.Near, true);
             }
         }
 
-        private void PaintWide(Graphics g, Color titleColor, Color detailColor)
+        private void PaintWide(Graphics g, Rectangle r, Color titleColor, Color detailColor)
         {
-            int pad = Math.Max(8, Height / 6);
-            int pictureSide = picture != null ? Height - 2 * pad : 0;
+            int pad = Math.Max(8, r.Height / 6);
+            int pictureSide = picture != null ? r.Height - 2 * pad : 0;
             if (pictureSide > 0)
             {
-                AgOpenPopup.DrawPicture(g, picture, new Rectangle(Width - pad - pictureSide, pad, pictureSide, pictureSide), !Enabled);
+                AgOpenPopup.DrawPicture(g, picture, new Rectangle(r.Right - pad - pictureSide, r.Top + pad, pictureSide, pictureSide), !Enabled);
             }
-            int textLeft = pad + 6;
-            int textWidth = Width - textLeft - pad - (pictureSide > 0 ? pictureSide + pad : 0);
+            int textLeft = r.Left + pad + 6;
+            int textWidth = r.Right - textLeft - pad - (pictureSide > 0 ? pictureSide + pad : 0);
             if (textWidth <= 0) return;
-            const TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter
-                | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding;
 
             if (detail.Length == 0)
             {
-                TextRenderer.DrawText(g, title, TitleFont, new Rectangle(textLeft, 0, textWidth, Height), titleColor, flags);
+                AgOpenPopup.DrawText(g, title, TitleFont, titleColor, new Rectangle(textLeft, r.Top, textWidth, r.Height),
+                    StringAlignment.Near, StringAlignment.Center, false);
                 return;
             }
-            int half = Height / 2;
-            TextRenderer.DrawText(g, title, TitleFont, new Rectangle(textLeft, pad / 2, textWidth, half - pad / 2), titleColor, flags);
-            TextRenderer.DrawText(g, detail, DetailFont, new Rectangle(textLeft, half, textWidth, half - pad / 2), detailColor, flags);
+            int half = r.Height / 2;
+            AgOpenPopup.DrawText(g, title, TitleFont, titleColor, new Rectangle(textLeft, r.Top + pad / 3, textWidth, half - pad / 3),
+                StringAlignment.Near, StringAlignment.Far, false);
+            AgOpenPopup.DrawText(g, detail, DetailFont, detailColor, new Rectangle(textLeft, r.Top + half, textWidth, half - pad / 3),
+                StringAlignment.Near, StringAlignment.Near, false);
         }
     }
 
@@ -464,7 +897,7 @@ namespace AgOpenGPS.AgOpen
     /// A touch-friendly list: tall rows, drag up and down to scroll, tap to pick.
     /// Each row has a name on the left and a short note on the right.
     /// </summary>
-    public class PopupList : Control
+    public class PopupList : PopupElement
     {
         public class Item
         {
@@ -483,21 +916,11 @@ namespace AgOpenGPS.AgOpen
         private int downY;
         private int downOffset;
 
-        public PopupList()
-        {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
-                | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            BackColor = AgOpenPopup.ListColor;
-            ForeColor = Color.White;
-            Font = AgOpenPopup.ListFont;
-            DetailFont = AgOpenPopup.SmallFont;
-            ItemHeight = 58;
-        }
-
         public event EventHandler SelectedIndexChanged;
 
-        public int ItemHeight { get; set; }
-        public Font DetailFont { get; set; }
+        public int ItemHeight { get; set; } = 66;
+        public Font Font { get; set; } = AgOpenPopup.ListFont;
+        public Font DetailFont { get; set; } = AgOpenPopup.SmallFont;
 
         /// <summary>Shown in the middle when the list is empty.</summary>
         public string EmptyText { get; set; } = "";
@@ -533,8 +956,11 @@ namespace AgOpenGPS.AgOpen
             items.AddRange(newItems);
             selected = -1;
             SetOffset(offset);
-            SelectedIndex = select;
-            if (select < 0 || select >= items.Count)
+            if (select >= 0 && select < items.Count)
+            {
+                SelectedIndex = select;
+            }
+            else
             {
                 // Nothing picked: still let listeners know the rows changed.
                 SelectedIndexChanged?.Invoke(this, EventArgs.Empty);
@@ -547,12 +973,12 @@ namespace AgOpenGPS.AgOpen
             if (index < 0) return;
             int top = index * ItemHeight;
             if (top < offset) SetOffset(top);
-            else if (top + ItemHeight > offset + Height) SetOffset(top + ItemHeight - Height);
+            else if (top + ItemHeight > offset + Bounds.Height) SetOffset(top + ItemHeight - Bounds.Height);
         }
 
         private int MaxOffset
         {
-            get { return Math.Max(0, items.Count * ItemHeight - Height); }
+            get { return Math.Max(0, items.Count * ItemHeight - Bounds.Height); }
         }
 
         private void SetOffset(int value)
@@ -563,104 +989,111 @@ namespace AgOpenGPS.AgOpen
             Invalidate();
         }
 
-        protected override void OnResize(EventArgs e)
+        public override void TouchDown(Point point)
         {
-            base.OnResize(e);
-            SetOffset(offset);
+            down = true;
+            dragged = false;
+            downY = point.Y;
+            downOffset = offset;
         }
 
-        protected override void OnMouseDown(MouseEventArgs e)
+        public override void TouchMove(Point point)
         {
-            if (e.Button == MouseButtons.Left)
-            {
-                down = true;
-                dragged = false;
-                downY = e.Y;
-                downOffset = offset;
-            }
-            base.OnMouseDown(e);
+            if (!down) return;
+            int moved = point.Y - downY;
+            if (!dragged && Math.Abs(moved) > DragStart) dragged = true;
+            if (dragged) SetOffset(downOffset - moved);
         }
 
-        protected override void OnMouseMove(MouseEventArgs e)
+        public override void TouchUp(Point point, bool inside)
         {
-            if (down)
+            if (down && !dragged && inside)
             {
-                int moved = e.Y - downY;
-                if (!dragged && Math.Abs(moved) > DragStart) dragged = true;
-                if (dragged) SetOffset(downOffset - moved);
-            }
-            base.OnMouseMove(e);
-        }
-
-        protected override void OnMouseUp(MouseEventArgs e)
-        {
-            if (down && !dragged && e.Button == MouseButtons.Left)
-            {
-                int index = (e.Y + offset) / Math.Max(1, ItemHeight);
-                if (e.Y >= 0 && index >= 0 && index < items.Count) SelectedIndex = index;
+                int index = (point.Y - Bounds.Top + offset) / Math.Max(1, ItemHeight);
+                if (index >= 0 && index < items.Count) SelectedIndex = index;
             }
             down = false;
             dragged = false;
-            base.OnMouseUp(e);
         }
 
-        protected override void OnMouseWheel(MouseEventArgs e)
+        public override void Wheel(int delta)
         {
-            SetOffset(offset - e.Delta / 120 * ItemHeight);
-            base.OnMouseWheel(e);
+            SetOffset(offset - delta / 120 * ItemHeight);
         }
 
-        protected override void OnPaint(PaintEventArgs e)
+        public override void Paint(Graphics g)
         {
-            Graphics g = e.Graphics;
-            g.Clear(BackColor);
-
-            if (items.Count == 0)
+            Rectangle r = Bounds;
+            // The list may have been filled before it got its size.
+            if (offset > MaxOffset) offset = MaxOffset;
+            var shape = new Rectangle(r.Left, r.Top, r.Width - 1, r.Height - 1);
+            using (GraphicsPath path = AgOpenPopup.RoundedRectangle(shape, 14))
             {
-                TextRenderer.DrawText(g, EmptyText, DetailFont, new Rectangle(16, 0, Width - 32, Height), AgOpenPopup.DimText,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
-                return;
+                using (var fill = new SolidBrush(AgOpenPopup.PanelColor))
+                {
+                    g.FillPath(fill, path);
+                }
+
+                GraphicsState state = g.Save();
+                g.SetClip(path, CombineMode.Intersect);
+
+                if (items.Count == 0)
+                {
+                    AgOpenPopup.DrawText(g, EmptyText, DetailFont, AgOpenPopup.DimText, Rectangle.Inflate(r, -18, -18),
+                        StringAlignment.Center, StringAlignment.Center, true);
+                }
+                else
+                {
+                    PaintRows(g, r);
+                }
+
+                g.Restore(state);
+                using (var pen = new Pen(AgOpenPopup.TileEdge, 1.5f))
+                {
+                    g.DrawPath(pen, path);
+                }
             }
+        }
 
+        private void PaintRows(Graphics g, Rectangle r)
+        {
             int first = offset / Math.Max(1, ItemHeight);
-            const TextFormatFlags nameFlags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter
-                | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding;
-            const TextFormatFlags detailFlags = TextFormatFlags.Right | TextFormatFlags.VerticalCenter
-                | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding;
-
-            using (var selectedBrush = new SolidBrush(AgOpenPopup.SelectedColor))
-            using (var line = new Pen(Color.FromArgb(60, 64, 68)))
+            using (var selectedBrush = new SolidBrush(AgOpenPopup.AccentColor))
+            using (var line = new Pen(AgOpenPopup.PanelLine, 1f))
             {
                 for (int i = first; i < items.Count; i++)
                 {
-                    int top = i * ItemHeight - offset;
-                    if (top > Height) break;
-                    var row = new Rectangle(0, top, Width, ItemHeight);
-                    if (i == selected) g.FillRectangle(selectedBrush, row);
+                    int top = r.Top + i * ItemHeight - offset;
+                    if (top > r.Bottom) break;
+                    var row = new Rectangle(r.Left, top, r.Width, ItemHeight);
+                    bool isSelected = i == selected;
+                    if (isSelected) g.FillRectangle(selectedBrush, row);
 
                     Item item = items[i];
                     int detailWidth = 0;
                     if (item.Detail.Length > 0)
                     {
-                        detailWidth = TextRenderer.MeasureText(g, item.Detail, DetailFont).Width + 8;
-                        TextRenderer.DrawText(g, item.Detail, DetailFont, new Rectangle(Width - 16 - detailWidth, top, detailWidth, ItemHeight),
-                            i == selected ? Color.White : AgOpenPopup.DimText, detailFlags);
+                        detailWidth = AgOpenPopup.MeasureText(g, item.Detail, DetailFont, r.Width / 2, false).Width + 6;
+                        AgOpenPopup.DrawText(g, item.Detail, DetailFont, isSelected ? AgOpenPopup.AccentText : AgOpenPopup.DimText,
+                            new Rectangle(r.Right - 18 - detailWidth, top, detailWidth, ItemHeight),
+                            StringAlignment.Far, StringAlignment.Center, false);
                     }
-                    TextRenderer.DrawText(g, item.Text, Font, new Rectangle(14, top, Math.Max(0, Width - 34 - detailWidth), ItemHeight),
-                        ForeColor, nameFlags);
-                    g.DrawLine(line, 0, row.Bottom - 1, Width, row.Bottom - 1);
+                    AgOpenPopup.DrawText(g, item.Text, Font, isSelected ? AgOpenPopup.AccentText : AgOpenPopup.TextColor,
+                        new Rectangle(r.Left + 16, top, Math.Max(0, r.Width - 40 - detailWidth), ItemHeight),
+                        StringAlignment.Near, StringAlignment.Center, false);
+                    if (!isSelected) g.DrawLine(line, r.Left + 10, row.Bottom - 1, r.Right - 10, row.Bottom - 1);
                 }
             }
 
             // Where we are in the list, when it doesn't all fit.
             int content = items.Count * ItemHeight;
-            if (content > Height && Height > 0)
+            if (content > r.Height && r.Height > 0)
             {
-                int thumb = Math.Max(30, Height * Height / content);
-                int y = (int)((Height - thumb) * (offset / (double)Math.Max(1, MaxOffset)));
-                using (var brush = new SolidBrush(Color.FromArgb(150, 155, 160)))
+                int thumb = Math.Max(36, r.Height * r.Height / content);
+                int y = r.Top + (int)((r.Height - thumb) * (offset / (double)Math.Max(1, MaxOffset)));
+                using (var brush = new SolidBrush(Color.FromArgb(150, 120, 126, 132)))
                 {
-                    g.FillRectangle(brush, Width - 6, y, 5, thumb);
+                    g.FillRectangle(brush, r.Right - 9, y + 4, 6, Math.Max(10, thumb - 8));
                 }
             }
         }
