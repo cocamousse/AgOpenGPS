@@ -12,7 +12,8 @@ namespace AgOpenGPS.AgOpen
     /// The start screen, shown when AgOpenGPS opens:
     /// - Change equipment settings: AgOpenGPS's tractor and implement picker.
     /// - Show fields: the field list, with a drawing of the picked field and
-    ///   Load / Edit paths (AgOpenGPS's Tracks screen for AB lines and curves).
+    ///   Load / Edit paths (AgOpenGPS's draw screen: the field outline, where you
+    ///   tap points to make AB lines and curves).
     /// - Continue: opens the last field again.
     /// A touch anywhere outside it goes to the map. It closes by itself after
     /// 30 seconds unless it's touched.
@@ -120,7 +121,7 @@ namespace AgOpenGPS.AgOpen
             tileEdit = Add(new PopupTile
             {
                 Wide = true,
-                Picture = Keep(Properties.Resources.ABTracks),
+                Picture = Keep(Properties.Resources.ABDraw),
                 Title = "Edit paths",
                 Detail = "AB lines and curves"
             });
@@ -363,7 +364,10 @@ namespace AgOpenGPS.AgOpen
             labelFieldInfo.Text = string.Join("   ·   ", info);
             preview.ShowField(shape, tractor);
             tileLoad.Enabled = true;
-            tileEdit.Enabled = true;
+            // AgOpenGPS's draw screen works on the boundary, so it needs one.
+            bool hasBoundary = shape.Fences.Count > 0;
+            tileEdit.Enabled = hasBoundary;
+            tileEdit.Detail = hasBoundary ? "AB lines and curves" : "needs a boundary first";
         }
 
         #endregion

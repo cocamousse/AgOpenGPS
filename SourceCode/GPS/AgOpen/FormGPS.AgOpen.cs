@@ -142,8 +142,8 @@ namespace AgOpenGPS
 
         /// <summary>
         /// Open a field folder the same way AgOpenGPS's Field button does. With
-        /// editPaths, AgOpenGPS's Tracks screen (AB lines and curves) opens once the
-        /// field is loaded.
+        /// editPaths, AgOpenGPS's draw screen (the field outline, where you tap
+        /// points to make AB lines and curves) opens once the field is loaded.
         /// </summary>
         internal async void AgOpenOpenField(string folder, bool editPaths)
         {
@@ -183,7 +183,7 @@ namespace AgOpenGPS
 
                 if (editPaths && isJobStarted)
                 {
-                    btnBuildTracks_Click(this, EventArgs.Empty);
+                    btnABDraw_Click(this, EventArgs.Empty);
                 }
             }
             catch (Exception ex)
