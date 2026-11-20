@@ -661,6 +661,9 @@ namespace AgOpenGPS
             }
             //Init AgShareClient
             agShareClient = new AgShareClient(Settings.Default.AgShareServer, Settings.Default.AgShareApiKey);
+
+            // AgOpen: connect to the AgOpen hub (see AgOpen/FormGPS.AgOpen.cs)
+            InitAgOpenHub();
         }
 
         #region Shutdown Handling
