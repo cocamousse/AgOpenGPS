@@ -36,9 +36,13 @@ namespace AgOpenGPS.AgOpen
         private volatile bool stopping;
         private volatile HubSettings settings;
 
+        private readonly object syncLock = new object();
+        private volatile bool syncing;
+
         private HubState state = HubState.NotPaired;
         private string lastProblem = "";
         private DateTime lastContactUtc = DateTime.MinValue;
+        private HubSyncResult lastSync;
 
         public HubConnection()
         {
@@ -67,6 +71,39 @@ namespace AgOpenGPS.AgOpen
         public DateTime LastContactUtc
         {
             get { lock (stateLock) return lastContactUtc; }
+        }
+
+        /// <summary>The last finished sync (null if none yet).</summary>
+        public HubSyncResult LastSync
+        {
+            get { lock (stateLock) return lastSync; }
+        }
+
+        public bool Syncing
+        {
+            get { return syncing; }
+        }
+
+        /// <summary>
+        /// Bring this tablet up to date with the hub (see HubSync). Runs on the
+        /// calling thread: call it from a background task. Returns null if a sync
+        /// is already running.
+        /// </summary>
+        public HubSyncResult Sync(HubSyncContext context)
+        {
+            if (!Monitor.TryEnter(syncLock)) return null;
+            try
+            {
+                syncing = true;
+                HubSyncResult result = HubSync.Run(this, context);
+                lock (stateLock) lastSync = result;
+                return result;
+            }
+            finally
+            {
+                syncing = false;
+                Monitor.Exit(syncLock);
+            }
         }
 
         /// <summary>One line for the screen, e.g. "Connected to the hub".</summary>

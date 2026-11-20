@@ -14,19 +14,22 @@ namespace AgOpenGPS.AgOpen
     public class FormHubSettings : Form
     {
         private readonly HubConnection hub;
+        private readonly Action syncNow;
         private readonly TextBox textServer = new TextBox();
         private readonly TextBox textCode = new TextBox();
         private readonly Button buttonPair = new Button();
         private readonly Button buttonTest = new Button();
         private readonly Button buttonUnpair = new Button();
+        private readonly Button buttonSync = new Button();
         private readonly Button buttonClose = new Button();
         private readonly Label labelMessage = new Label();
         private readonly Label labelStatus = new Label();
         private readonly Timer refreshTimer = new Timer();
 
-        public FormHubSettings(HubConnection hub)
+        public FormHubSettings(HubConnection hub, Action syncNow)
         {
             this.hub = hub;
+            this.syncNow = syncNow;
             BuildLayout();
 
             textServer.Text = hub.Settings.ServerUrl;
@@ -99,14 +102,19 @@ namespace AgOpenGPS.AgOpen
             labelMessage.Location = new Point(16, 274);
             labelMessage.Size = new Size(608, 52);
 
-            labelStatus.Font = new Font("Tahoma", 11F);
+            labelStatus.Font = new Font("Tahoma", 10F);
             labelStatus.Location = new Point(16, 330);
-            labelStatus.Size = new Size(500, 104);
+            labelStatus.Size = new Size(500, 106);
 
             buttonUnpair.Text = "Unpair";
             buttonUnpair.Location = new Point(16, 440);
             buttonUnpair.Size = new Size(150, 46);
             buttonUnpair.Click += ButtonUnpair_Click;
+
+            buttonSync.Text = "Sync now";
+            buttonSync.Location = new Point(182, 440);
+            buttonSync.Size = new Size(150, 46);
+            buttonSync.Click += ButtonSync_Click;
 
             buttonClose.Image = Properties.Resources.OK64;
             buttonClose.FlatStyle = FlatStyle.Flat;
@@ -139,6 +147,7 @@ namespace AgOpenGPS.AgOpen
             Controls.Add(labelMessage);
             Controls.Add(labelStatus);
             Controls.Add(buttonUnpair);
+            Controls.Add(buttonSync);
             Controls.Add(buttonClose);
 
             ResumeLayout(false);
@@ -180,7 +189,16 @@ namespace AgOpenGPS.AgOpen
             DateTime contact = hub.LastContactUtc;
             if (contact != DateTime.MinValue)
             {
-                text += "\r\nLast heard from the hub: " + contact.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+                text += "   Last heard from the hub: " + contact.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+            }
+            HubSyncResult sync = hub.LastSync;
+            if (hub.Syncing)
+            {
+                text += "\r\nSyncing fields and profiles...";
+            }
+            else if (sync != null)
+            {
+                text += "\r\nLast sync " + sync.FinishedUtc.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture) + ": " + sync.Summary();
             }
             if (state != HubState.Online && hub.LastProblem.Length > 0)
             {
@@ -202,6 +220,7 @@ namespace AgOpenGPS.AgOpen
                     break;
             }
             buttonUnpair.Enabled = settings.IsPaired;
+            buttonSync.Enabled = settings.IsPaired && !hub.Syncing;
         }
 
         private void ShowMessage(string message, bool good)
@@ -238,7 +257,8 @@ namespace AgOpenGPS.AgOpen
                 {
                     textCode.Text = "";
                     textServer.Text = hub.Settings.ServerUrl;
-                    ShowMessage("Paired. This tablet is '" + hub.Settings.TabletLabel + "' on the hub.", true);
+                    ShowMessage("Paired. This tablet is '" + hub.Settings.TabletLabel + "' on the hub. Getting fields and profiles...", true);
+                    if (syncNow != null) syncNow();
                 }
                 else
                 {
@@ -274,6 +294,14 @@ namespace AgOpenGPS.AgOpen
                 SetBusy(false);
                 ShowStatus();
             }
+        }
+
+        private void ButtonSync_Click(object sender, EventArgs e)
+        {
+            if (syncNow == null) return;
+            ShowMessage("Syncing with the hub...", true);
+            syncNow();
+            ShowStatus();
         }
 
         private void ButtonUnpair_Click(object sender, EventArgs e)
