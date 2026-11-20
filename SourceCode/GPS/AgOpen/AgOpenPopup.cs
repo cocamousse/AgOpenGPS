@@ -154,16 +154,22 @@ namespace AgOpenGPS.AgOpen
         {
         }
 
-        /// <summary>Size the pop-up as a share of the AgOpenGPS window and centre it there.</summary>
-        protected void PlaceOverMap(double widthShare, double heightShare, Size smallest, Size largest)
+        /// <summary>
+        /// Size the pop-up as a share of the AgOpenGPS window and place it there:
+        /// centred across, and up and down by verticalShare (0 = top, 0.5 = middle).
+        /// extraHeight is added after the size limits (e.g. for an optional row).
+        /// </summary>
+        protected void PlaceOverMap(double widthShare, double heightShare, Size smallest, Size largest,
+            double verticalShare = 0.5, int extraHeight = 0)
         {
             Rectangle area = mf.RectangleToScreen(mf.ClientRectangle);
             int width = Clamp((int)(area.Width * widthShare), smallest.Width, largest.Width);
-            int height = Clamp((int)(area.Height * heightShare), smallest.Height, largest.Height);
+            int height = Clamp((int)(area.Height * heightShare), smallest.Height, largest.Height) + extraHeight;
             width = Math.Min(width, Math.Max(200, area.Width - 8));
             if (edgeNote.Length > 0) height += NoteSpace;
             height = Math.Min(height, Math.Max(150, area.Height - 8));
-            Bounds = new Rectangle(area.Left + (area.Width - width) / 2, area.Top + (area.Height - height) / 2, width, height);
+            int top = area.Top + (int)((area.Height - height) * Math.Max(0.0, Math.Min(1.0, verticalShare)));
+            Bounds = new Rectangle(area.Left + (area.Width - width) / 2, top, width, height);
         }
 
         protected static int Clamp(int value, int low, int high)

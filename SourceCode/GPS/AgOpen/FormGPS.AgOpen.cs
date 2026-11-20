@@ -25,6 +25,7 @@ namespace AgOpenGPS
         private ToolStripMenuItem agOpenHubMenuItem;
         private ToolStripMenuItem agOpenStartMenuItem;
         private FormAgOpenStart agOpenStart;
+        private AgOpenFieldWatch agOpenFieldWatch;
         private bool agOpenSyncRunning;
 
         // Field folders the hub sync renamed this session: old name -> new name.
@@ -35,6 +36,18 @@ namespace AgOpenGPS
         internal bool AgOpenSyncing
         {
             get { return agOpenSyncRunning; }
+        }
+
+        /// <summary>The start screen is up (the "Field detected" pop-up waits for it).</summary>
+        internal bool AgOpenStartScreenOpen
+        {
+            get { return agOpenStart != null && !agOpenStart.IsDisposed; }
+        }
+
+        /// <summary>AgOpenGPS is closing down.</summary>
+        internal bool AgOpenShuttingDown
+        {
+            get { return isShuttingDown; }
         }
 
         private void InitAgOpenHub()
@@ -68,8 +81,14 @@ namespace AgOpenGPS
             fileToolStripMenuItem.DropDownItems.Insert(index + 2, agOpenStartMenuItem);
             fileToolStripMenuItem.DropDownOpening += AgOpenHubMenu_DropDownOpening;
 
-            // The start screen comes up once the main window is on screen.
+            // The start screen comes up once the main window is on screen, and
+            // "Field detected" starts watching then too.
+            agOpenFieldWatch = new AgOpenFieldWatch(this);
             Shown += AgOpen_Shown;
+            FormClosing += (s, e) =>
+            {
+                if (!e.Cancel) agOpenFieldWatch.Stop();
+            };
 
             // Bring fields and profiles up to date when AgOpenGPS starts.
             SyncWithAgOpenHub(true);
@@ -86,6 +105,7 @@ namespace AgOpenGPS
                 delay.Stop();
                 delay.Dispose();
                 ShowAgOpenStartScreen(false);
+                agOpenFieldWatch.Start();
             };
             delay.Start();
         }
@@ -270,6 +290,7 @@ namespace AgOpenGPS
             {
                 agOpenSyncRunning = false;
                 if (agOpenStart != null && !agOpenStart.IsDisposed) agOpenStart.RefreshAfterSync();
+                if (agOpenFieldWatch != null) agOpenFieldWatch.FieldsChanged();
             }
         }
 
