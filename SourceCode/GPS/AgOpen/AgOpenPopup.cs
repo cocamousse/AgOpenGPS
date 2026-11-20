@@ -45,7 +45,7 @@ namespace AgOpenGPS.AgOpen
 
         // About a quarter bigger than AgOpenGPS's usual lettering: the tablet is
         // further from your face in a cab dock.
-        public static readonly Font NoteFont = new Font("Tahoma", 12.75F);
+        public static readonly Font NoteFont = new Font("Tahoma", 15F, FontStyle.Bold);
         public static readonly Font SmallFont = new Font("Tahoma", 14F);
         public static readonly Font InfoFont = new Font("Tahoma", 15F);
         public static readonly Font ListFont = new Font("Tahoma", 18F);
@@ -54,6 +54,9 @@ namespace AgOpenGPS.AgOpen
 
         /// <summary>Room around the box for its soft shadow.</summary>
         protected const int ShadowSize = 12;
+
+        /// <summary>Room under the box for the note that floats over the map.</summary>
+        protected const int NoteSpace = 70;
 
         /// <summary>How round the box corners are.</summary>
         protected const int BoxRadius = 24;
@@ -67,6 +70,11 @@ namespace AgOpenGPS.AgOpen
         private bool drawProblemLogged;
         private bool filtering;
         private string edgeNote = "";
+        private readonly System.Windows.Forms.Timer countdownTimer = new System.Windows.Forms.Timer();
+        private DateTime countdownEnd;
+        private double countdownSeconds;
+        private bool countingDown;
+        private bool countdownHooked;
         private double edgeShare = 1.0;
 
         protected AgOpenPopup(FormGPS mf)
@@ -90,7 +98,11 @@ namespace AgOpenGPS.AgOpen
             }
         }
 
-        /// <summary>Small text set into the bottom edge of the box, e.g. "Touch anywhere else to go to the map".</summary>
+        /// <summary>
+        /// White text floating over the map just under the box, e.g. "Touch anywhere
+        /// else to go to the map". While the countdown runs, a second line says when
+        /// the pop-up will close by itself.
+        /// </summary>
         public string EdgeNote
         {
             get { return edgeNote; }
@@ -110,7 +122,11 @@ namespace AgOpenGPS.AgOpen
         /// <summary>The box itself (inside the shadow).</summary>
         protected Rectangle BoxRectangle
         {
-            get { return new Rectangle(ShadowSize, ShadowSize, Math.Max(0, Width - 2 * ShadowSize - 1), Math.Max(0, Height - 2 * ShadowSize - 1)); }
+            get
+            {
+                int below = edgeNote.Length > 0 ? NoteSpace : 0;
+                return new Rectangle(ShadowSize, ShadowSize, Math.Max(0, Width - 2 * ShadowSize - 1), Math.Max(0, Height - 2 * ShadowSize - 1 - below));
+            }
         }
 
         /// <summary>The inside of the box, where the buttons and text go.</summary>
@@ -120,8 +136,7 @@ namespace AgOpenGPS.AgOpen
             {
                 Rectangle box = BoxRectangle;
                 const int pad = 24;
-                int bottom = pad + (edgeNote.Length > 0 ? 14 : 0);
-                return new Rectangle(box.Left + pad, box.Top + pad, Math.Max(0, box.Width - 2 * pad), Math.Max(0, box.Height - pad - bottom));
+                return new Rectangle(box.Left + pad, box.Top + pad, Math.Max(0, box.Width - 2 * pad), Math.Max(0, box.Height - 2 * pad));
             }
         }
 
@@ -146,6 +161,7 @@ namespace AgOpenGPS.AgOpen
             int width = Clamp((int)(area.Width * widthShare), smallest.Width, largest.Width);
             int height = Clamp((int)(area.Height * heightShare), smallest.Height, largest.Height);
             width = Math.Min(width, Math.Max(200, area.Width - 8));
+            if (edgeNote.Length > 0) height += NoteSpace;
             height = Math.Min(height, Math.Max(150, area.Height - 8));
             Bounds = new Rectangle(area.Left + (area.Width - width) / 2, area.Top + (area.Height - height) / 2, width, height);
         }
@@ -155,6 +171,53 @@ namespace AgOpenGPS.AgOpen
             if (value < low) return low;
             if (value > high) return high;
             return value;
+        }
+
+        /// <summary>
+        /// Close by itself after this many seconds, shown as a green line running
+        /// round the box edge and in the note under it. A touch on the box stops it.
+        /// </summary>
+        protected void StartCountdown(double seconds)
+        {
+            countdownSeconds = Math.Max(1.0, seconds);
+            countdownEnd = DateTime.UtcNow.AddSeconds(countdownSeconds);
+            countingDown = true;
+            if (!countdownHooked)
+            {
+                countdownHooked = true;
+                countdownTimer.Interval = 100;
+                countdownTimer.Tick += CountdownTimer_Tick;
+            }
+            countdownTimer.Start();
+            EdgeShare = 1.0;
+        }
+
+        /// <summary>Stop the countdown: the pop-up stays until it's closed.</summary>
+        protected void StopCountdown()
+        {
+            if (!countingDown) return;
+            countingDown = false;
+            countdownTimer.Stop();
+            EdgeShare = 1.0;
+        }
+
+        private void CountdownTimer_Tick(object sender, EventArgs e)
+        {
+            if (!countingDown || IsDisposed) return;
+            double left = (countdownEnd - DateTime.UtcNow).TotalSeconds;
+            if (left <= 0)
+            {
+                StopCountdown();
+                CountdownFinished();
+                return;
+            }
+            EdgeShare = left / countdownSeconds;
+        }
+
+        /// <summary>The countdown ran out. Closes the box.</summary>
+        protected virtual void CountdownFinished()
+        {
+            Close();
         }
 
         /// <summary>A touch landed on the map outside the box. Closes the box.</summary>
@@ -279,23 +342,31 @@ namespace AgOpenGPS.AgOpen
             }
         }
 
-        // The note sits on the bottom edge, on a small solid label so it's easy to read.
+        // The note floats over the map under the box: white letters with a dark
+        // outline, so they read on any background.
         private void PaintEdgeNote(Graphics g)
         {
             if (edgeNote.Length == 0) return;
-            Rectangle box = BoxRectangle;
-            Size size = MeasureText(g, edgeNote, NoteFont, Math.Max(10, box.Width - 40), false);
-            int width = Math.Min(box.Width - 40, size.Width + 28);
-            int height = size.Height + 10;
-            var label = new Rectangle(box.Left + (box.Width - width) / 2, box.Bottom - height / 2, width, height);
-            using (GraphicsPath path = RoundedRectangle(label, height / 2))
-            using (var fill = new SolidBrush(Color.FromArgb(245, 250, 251, 252)))
-            using (var pen = new Pen(BoxEdgeColor, 1.5f))
+            string text = edgeNote;
+            if (countingDown)
             {
-                g.FillPath(fill, path);
-                g.DrawPath(pen, path);
+                int seconds = (int)Math.Ceiling(Math.Max(0, (countdownEnd - DateTime.UtcNow).TotalSeconds));
+                text += "\nThis message will disappear automatically in "
+                    + seconds.ToString(System.Globalization.CultureInfo.CurrentCulture) + " s";
             }
-            DrawText(g, edgeNote, NoteFont, DimText, label, StringAlignment.Center, StringAlignment.Center, false);
+
+            Rectangle box = BoxRectangle;
+            var area = new RectangleF(0, box.Bottom + ShadowSize + 2, Width, Height - box.Bottom - ShadowSize - 2);
+            float emPixels = NoteFont.SizeInPoints * g.DpiY / 72f;
+            using (var path = new GraphicsPath())
+            using (var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near })
+            using (var outline = new Pen(Color.FromArgb(220, 0, 0, 0), 5f) { LineJoin = LineJoin.Round })
+            using (var fill = new SolidBrush(Color.White))
+            {
+                path.AddString(text, NoteFont.FontFamily, (int)NoteFont.Style, emPixels, area, format);
+                g.DrawPath(outline, path);
+                g.FillPath(fill, path);
+            }
         }
 
         // The first share of the box edge, clockwise from the top middle.
@@ -385,10 +456,14 @@ namespace AgOpenGPS.AgOpen
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing && canvas != null)
+            if (disposing)
             {
-                canvas.Dispose();
-                canvas = null;
+                countdownTimer.Dispose();
+                if (canvas != null)
+                {
+                    canvas.Dispose();
+                    canvas = null;
+                }
             }
             base.Dispose(disposing);
         }
@@ -483,6 +558,7 @@ namespace AgOpenGPS.AgOpen
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
+            StopCountdown();
             if (e.Button != MouseButtons.Left) return;
             touched = ElementAt(e.Location);
             if (touched != null) touched.TouchDown(e.Location);
@@ -591,6 +667,8 @@ namespace AgOpenGPS.AgOpen
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            countingDown = false;
+            countdownTimer.Stop();
             StopFiltering();
             base.OnFormClosed(e);
         }

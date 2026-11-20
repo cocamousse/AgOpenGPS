@@ -11,9 +11,11 @@ namespace AgOpenGPS.AgOpen
     /// <summary>
     /// The start screen, shown when AgOpenGPS opens:
     /// - Change equipment settings: AgOpenGPS's tractor and implement picker.
-    /// - Show fields: the field list, with a drawing of the picked field and Load / Edit.
+    /// - Show fields: the field list, with a drawing of the picked field and
+    ///   Load / Edit paths (AgOpenGPS's Tracks screen for AB lines and curves).
     /// - Continue: opens the last field again.
-    /// A touch anywhere outside it goes to the map.
+    /// A touch anywhere outside it goes to the map. It closes by itself after
+    /// 30 seconds unless it's touched.
     /// </summary>
     public class FormAgOpenStart : AgOpenPopup
     {
@@ -118,9 +120,9 @@ namespace AgOpenGPS.AgOpen
             tileEdit = Add(new PopupTile
             {
                 Wide = true,
-                Picture = Keep(Properties.Resources.Boundary),
-                Title = "Edit",
-                Detail = "boundary"
+                Picture = Keep(Properties.Resources.ABTracks),
+                Title = "Edit paths",
+                Detail = "AB lines and curves"
             });
             tileEdit.Click += (s, e) => OpenSelected(true);
 
@@ -394,18 +396,18 @@ namespace AgOpenGPS.AgOpen
             }
         }
 
-        private void OpenSelected(bool editBoundary)
+        private void OpenSelected(bool editPaths)
         {
             AgOpenFieldEntry entry = SelectedEntry();
-            if (entry != null) OpenField(entry.Folder, editBoundary);
+            if (entry != null) OpenField(entry.Folder, editPaths);
         }
 
-        private void OpenField(string folder, bool editBoundary)
+        private void OpenField(string folder, bool editPaths)
         {
             if (string.IsNullOrEmpty(folder)) return;
             FormGPS main = mf;
             Close();
-            main.AgOpenOpenField(folder, editBoundary);
+            main.AgOpenOpenField(folder, editPaths);
         }
 
         #endregion
@@ -414,6 +416,7 @@ namespace AgOpenGPS.AgOpen
         {
             base.OnShown(e);
             refreshTimer.Start();
+            StartCountdown(30);
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)

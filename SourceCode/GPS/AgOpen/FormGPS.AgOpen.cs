@@ -142,9 +142,10 @@ namespace AgOpenGPS
 
         /// <summary>
         /// Open a field folder the same way AgOpenGPS's Field button does. With
-        /// editBoundary, AgOpenGPS's boundary screen opens once the field is loaded.
+        /// editPaths, AgOpenGPS's Tracks screen (AB lines and curves) opens once the
+        /// field is loaded.
         /// </summary>
-        internal async void AgOpenOpenField(string folder, bool editBoundary)
+        internal async void AgOpenOpenField(string folder, bool editPaths)
         {
             try
             {
@@ -180,9 +181,9 @@ namespace AgOpenGPS
                 await FileOpenField(fieldFile);
                 AgOpenAfterFieldOpened(wasJobStarted, previousFolder);
 
-                if (editBoundary && isJobStarted)
+                if (editPaths && isJobStarted)
                 {
-                    boundariesToolStripMenuItem_Click(this, EventArgs.Empty);
+                    btnBuildTracks_Click(this, EventArgs.Empty);
                 }
             }
             catch (Exception ex)
