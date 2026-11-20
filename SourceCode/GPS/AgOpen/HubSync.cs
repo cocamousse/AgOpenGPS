@@ -44,6 +44,9 @@ namespace AgOpenGPS.AgOpen
         public List<string> Notes = new List<string>();
         public List<string> Problems = new List<string>();
 
+        /// <summary>Field folders renamed because the field was renamed on the hub: old name, new name.</summary>
+        public List<KeyValuePair<string, string>> RenamedFolders = new List<KeyValuePair<string, string>>();
+
         public bool ChangedAnything
         {
             get { return FieldsWritten > 0 || ProfilesReceived > 0 || ProfilesSent > 0 || ProfilesRemoved > 0; }
@@ -197,6 +200,7 @@ namespace AgOpenGPS.AgOpen
                 if (!string.Equals(folder, wanted, StringComparison.OrdinalIgnoreCase) && !Directory.Exists(wanted))
                 {
                     Directory.Move(folder, wanted);
+                    result.RenamedFolders.Add(new KeyValuePair<string, string>(Path.GetFileName(folder), Path.GetFileName(wanted)));
                     folder = wanted;
                     folderOf[id] = folder;
                 }

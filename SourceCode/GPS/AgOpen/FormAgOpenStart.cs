@@ -1,0 +1,466 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Globalization;
+using System.IO;
+using System.Windows.Forms;
+using AgOpenGPS.Core.Models;
+
+namespace AgOpenGPS.AgOpen
+{
+    /// <summary>
+    /// The start screen, shown when AgOpenGPS opens:
+    /// - Change equipment settings: AgOpenGPS's tractor and implement picker.
+    /// - Show fields: the field list, with a drawing of the picked field and Load / Edit.
+    /// - Continue: opens the last field again.
+    /// A touch anywhere outside it goes to the map.
+    /// </summary>
+    public class FormAgOpenStart : AgOpenPopup
+    {
+        private readonly Panel pageStart = new Panel();
+        private readonly Panel pageFields = new Panel();
+
+        // Start page
+        private readonly Label labelHub = new Label();
+        private readonly PopupTile tileEquipment = new PopupTile();
+        private readonly PopupTile tileFields = new PopupTile();
+        private readonly PopupTile tileContinue = new PopupTile();
+
+        // Fields page
+        private readonly PopupTile tileBack = new PopupTile();
+        private readonly Label labelFieldsTitle = new Label();
+        private readonly PopupTile tileSort = new PopupTile();
+        private readonly PopupList listFields = new PopupList();
+        private readonly Label labelFieldName = new Label();
+        private readonly Label labelFieldInfo = new Label();
+        private readonly FieldPreview preview = new FieldPreview();
+        private readonly PopupTile tileLoad = new PopupTile();
+        private readonly PopupTile tileEdit = new PopupTile();
+
+        private readonly System.Windows.Forms.Timer refreshTimer = new System.Windows.Forms.Timer();
+        private readonly List<Image> pictures = new List<Image>();
+
+        private List<AgOpenFieldEntry> fields = new List<AgOpenFieldEntry>();
+        private string continueFolder = "";
+        private bool sortNearest;
+        private bool showingFields;
+
+        public FormAgOpenStart(FormGPS mf) : base(mf)
+        {
+            Text = "AgOpen";
+            EdgeNote = "Touch anywhere else to go to the map";
+            Build();
+            ShowPage(false);
+
+            refreshTimer.Interval = 1000;
+            refreshTimer.Tick += (s, e) => ShowHubLine();
+        }
+
+        #region Building
+
+        private void Build()
+        {
+            SuspendLayout();
+
+            foreach (Panel page in new[] { pageStart, pageFields })
+            {
+                page.BackColor = BoxColor;
+                page.ForeColor = Color.White;
+                Controls.Add(page);
+            }
+
+            // Start page
+            labelHub.Font = SmallFont;
+            labelHub.ForeColor = DimText;
+            labelHub.BackColor = BoxColor;
+            labelHub.TextAlign = ContentAlignment.MiddleLeft;
+            labelHub.AutoEllipsis = true;
+
+            tileEquipment.Picture = Keep(Properties.Resources.vehiclePageTractor);
+            tileEquipment.Title = "Change equipment settings";
+            tileEquipment.Click += TileEquipment_Click;
+
+            tileFields.Picture = Keep(Properties.Resources.JobActive);
+            tileFields.Title = "Show fields";
+            tileFields.Click += (s, e) => ShowPage(true);
+
+            tileContinue.Wide = true;
+            tileContinue.TileColor = AccentColor;
+            tileContinue.Picture = Keep(Properties.Resources.Play);
+            tileContinue.Click += TileContinue_Click;
+
+            pageStart.Controls.Add(labelHub);
+            pageStart.Controls.Add(tileEquipment);
+            pageStart.Controls.Add(tileFields);
+            pageStart.Controls.Add(tileContinue);
+
+            // Fields page
+            tileBack.Wide = true;
+            tileBack.Picture = Keep(Properties.Resources.back_button);
+            tileBack.Title = "Back";
+            tileBack.Click += (s, e) => ShowPage(false);
+
+            labelFieldsTitle.Font = HeadingFont;
+            labelFieldsTitle.ForeColor = Color.White;
+            labelFieldsTitle.BackColor = BoxColor;
+            labelFieldsTitle.TextAlign = ContentAlignment.MiddleLeft;
+            labelFieldsTitle.AutoEllipsis = true;
+
+            tileSort.Wide = true;
+            tileSort.Picture = Keep(Properties.Resources.Sort);
+            tileSort.TitleFont = SmallFont;
+            tileSort.Click += TileSort_Click;
+
+            listFields.EmptyText = "No fields on this tablet yet.";
+            listFields.SelectedIndexChanged += (s, e) => ShowSelectedField();
+
+            labelFieldName.Font = HeadingFont;
+            labelFieldName.ForeColor = Color.White;
+            labelFieldName.BackColor = BoxColor;
+            labelFieldName.TextAlign = ContentAlignment.MiddleLeft;
+            labelFieldName.AutoEllipsis = true;
+
+            labelFieldInfo.Font = InfoFont;
+            labelFieldInfo.ForeColor = DimText;
+            labelFieldInfo.BackColor = BoxColor;
+            labelFieldInfo.TextAlign = ContentAlignment.MiddleLeft;
+            labelFieldInfo.AutoEllipsis = true;
+
+            preview.EmptyText = "Tap a field to see it here.";
+
+            tileLoad.Wide = true;
+            tileLoad.TileColor = AccentColor;
+            tileLoad.Picture = Keep(Properties.Resources.FileOpen);
+            tileLoad.Title = "Load";
+            tileLoad.Click += (s, e) => OpenSelected(false);
+
+            tileEdit.Wide = true;
+            tileEdit.Picture = Keep(Properties.Resources.Boundary);
+            tileEdit.Title = "Edit";
+            tileEdit.Detail = "boundary";
+            tileEdit.Click += (s, e) => OpenSelected(true);
+
+            pageFields.Controls.Add(tileBack);
+            pageFields.Controls.Add(labelFieldsTitle);
+            pageFields.Controls.Add(tileSort);
+            pageFields.Controls.Add(listFields);
+            pageFields.Controls.Add(labelFieldName);
+            pageFields.Controls.Add(labelFieldInfo);
+            pageFields.Controls.Add(preview);
+            pageFields.Controls.Add(tileLoad);
+            pageFields.Controls.Add(tileEdit);
+
+            ResumeLayout(false);
+        }
+
+        private Image Keep(Image picture)
+        {
+            pictures.Add(picture);
+            return picture;
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            LayoutPages();
+            Invalidate();
+        }
+
+        private void LayoutPages()
+        {
+            Rectangle c = ContentRectangle;
+            pageStart.Bounds = c;
+            pageFields.Bounds = c;
+            int w = c.Width, h = c.Height;
+            if (w < 100 || h < 100) return;
+
+            // Start page: hub line on top, two big squares, the Continue bar at the bottom.
+            labelHub.Bounds = new Rectangle(0, 0, w, 30);
+            int continueHeight = Math.Max(64, h / 7);
+            tileContinue.Bounds = new Rectangle(0, h - continueHeight, w, continueHeight);
+            int areaTop = labelHub.Bottom + 10;
+            int areaBottom = tileContinue.Top - 20;
+            int gap = Math.Max(20, w / 28);
+            int side = Math.Max(60, Math.Min((w - gap) / 2, areaBottom - areaTop));
+            int left = (w - (2 * side + gap)) / 2;
+            int top = areaTop + Math.Max(0, (areaBottom - areaTop - side) / 2);
+            tileEquipment.Bounds = new Rectangle(left, top, side, side);
+            tileFields.Bounds = new Rectangle(left + side + gap, top, side, side);
+
+            // Fields page: Back, title and sort along the top; the list on the left;
+            // the picked field on the right with Load and Edit under it.
+            int barHeight = 58;
+            tileBack.Bounds = new Rectangle(0, 0, 150, barHeight);
+            tileSort.Bounds = new Rectangle(w - 200, 0, 200, barHeight);
+            labelFieldsTitle.Bounds = new Rectangle(tileBack.Right + 16, 0, Math.Max(0, tileSort.Left - tileBack.Right - 32), barHeight);
+            int bodyTop = barHeight + 14;
+            int listWidth = Math.Max(240, (int)(w * 0.38));
+            listFields.Bounds = new Rectangle(0, bodyTop, listWidth, h - bodyTop);
+            int right = listWidth + 20;
+            int rightWidth = Math.Max(100, w - right);
+            labelFieldName.Bounds = new Rectangle(right, bodyTop, rightWidth, 36);
+            labelFieldInfo.Bounds = new Rectangle(right, labelFieldName.Bottom, rightWidth, 30);
+            int buttonHeight = Math.Max(64, h / 8);
+            int buttonWidth = (rightWidth - 16) / 2;
+            tileLoad.Bounds = new Rectangle(right, h - buttonHeight, buttonWidth, buttonHeight);
+            tileEdit.Bounds = new Rectangle(right + buttonWidth + 16, h - buttonHeight, rightWidth - buttonWidth - 16, buttonHeight);
+            int previewTop = labelFieldInfo.Bottom + 8;
+            preview.Bounds = new Rectangle(right, previewTop, rightWidth, Math.Max(40, tileLoad.Top - 14 - previewTop));
+        }
+
+        #endregion
+
+        #region Pages
+
+        private void ShowPage(bool showFields)
+        {
+            showingFields = showFields;
+            if (showFields)
+            {
+                ReadFields();
+                PlaceOverMap(0.86, 0.86, new Size(720, 480), new Size(1500, 980));
+            }
+            else
+            {
+                ShowStartPage();
+                PlaceOverMap(0.60, 0.64, new Size(600, 420), new Size(1000, 700));
+            }
+            pageStart.Visible = !showFields;
+            pageFields.Visible = showFields;
+            LayoutPages();
+            Invalidate();
+        }
+
+        /// <summary>The hub finished a sync: fields or profiles may have changed.</summary>
+        public void RefreshAfterSync()
+        {
+            if (IsDisposed) return;
+            if (showingFields) ReadFields();
+            else ShowStartPage();
+        }
+
+        private void ShowStartPage()
+        {
+            ShowHubLine();
+
+            string vehicle = RegistrySettings.vehicleProfileName;
+            string tool = RegistrySettings.toolProfileName;
+            tileEquipment.Detail = "Current: " + (string.IsNullOrEmpty(vehicle) ? "no tractor" : vehicle)
+                + " + " + (string.IsNullOrEmpty(tool) ? "no implement" : tool);
+
+            int count = AgOpenFields.Count(RegistrySettings.fieldsDirectory);
+            tileFields.Detail = count == 0 ? "No fields yet"
+                : count == 1 ? "1 field" : count.ToString(CultureInfo.CurrentCulture) + " fields";
+
+            // Continue: the last field AgOpenGPS had open (it remembers it).
+            continueFolder = mf.currentFieldDirectory ?? "";
+            bool canContinue = continueFolder.Length > 0
+                && File.Exists(Path.Combine(RegistrySettings.fieldsDirectory, continueFolder, "Field.txt"));
+            if (canContinue)
+            {
+                tileContinue.Title = "Continue: " + continueFolder;
+                tileContinue.Detail = "";
+            }
+            else
+            {
+                continueFolder = "";
+                tileContinue.Title = "Continue";
+                tileContinue.Detail = "No recent field yet";
+            }
+            tileContinue.Enabled = canContinue;
+        }
+
+        private void ShowHubLine()
+        {
+            string text = HubLine();
+            if (labelHub.Text != text) labelHub.Text = text;
+        }
+
+        private string HubLine()
+        {
+            HubConnection hub = mf.agOpenHub;
+            if (hub == null) return "Hub: not running";
+            if (!hub.Settings.IsPaired) return "Hub: not paired (File menu, AgOpen Hub)";
+            if (mf.AgOpenSyncing || hub.Syncing) return "Hub: syncing fields and equipment...";
+            HubSyncResult last = hub.LastSync;
+            if (last != null && last.Completed)
+            {
+                return "Hub: synced at " + last.FinishedUtc.ToLocalTime().ToString("t", CultureInfo.CurrentCulture);
+            }
+            if (hub.State == HubState.Offline || (last != null && !last.Completed))
+            {
+                return "Hub: not reachable, using the fields from the last sync";
+            }
+            return "Hub: " + hub.StatusText;
+        }
+
+        #endregion
+
+        #region Field list
+
+        private void ReadFields()
+        {
+            AgOpenFieldEntry kept = SelectedEntry();
+            string keep = kept != null ? kept.Folder : "";
+            Wgs84? here = mf.AgOpenPosition();
+
+            fields = AgOpenFields.List(RegistrySettings.fieldsDirectory, here);
+            if (!here.HasValue) sortNearest = false;
+            tileSort.Enabled = here.HasValue;
+            tileSort.Title = sortNearest ? "Sort: nearest" : "Sort: A to Z";
+            labelFieldsTitle.Text = fields.Count == 1 ? "1 field" : fields.Count.ToString(CultureInfo.CurrentCulture) + " fields";
+
+            if (sortNearest)
+            {
+                fields.Sort((a, b) =>
+                {
+                    double da = a.DistanceM ?? double.MaxValue, db = b.DistanceM ?? double.MaxValue;
+                    int byDistance = da.CompareTo(db);
+                    return byDistance != 0 ? byDistance : string.Compare(a.Folder, b.Folder, StringComparison.CurrentCultureIgnoreCase);
+                });
+            }
+            else
+            {
+                fields.Sort((a, b) => string.Compare(a.Folder, b.Folder, StringComparison.CurrentCultureIgnoreCase));
+            }
+
+            var items = new List<PopupList.Item>();
+            int select = -1;
+            foreach (AgOpenFieldEntry entry in fields)
+            {
+                string detail = "";
+                if (entry.DistanceM.HasValue)
+                {
+                    detail = entry.DistanceM.Value <= 0 ? "here" : AgOpenFields.Distance(entry.DistanceM.Value, mf.isMetric);
+                }
+                if (keep.Length > 0 && string.Equals(entry.Folder, keep, StringComparison.OrdinalIgnoreCase)) select = items.Count;
+                items.Add(new PopupList.Item { Text = entry.Folder, Detail = detail, Tag = entry });
+            }
+            listFields.EmptyText = "No fields on this tablet yet. Fields from the hub show up here after a sync, "
+                + "or make one with AgOpenGPS's Field button.";
+            listFields.SetItems(items, select);
+        }
+
+        private AgOpenFieldEntry SelectedEntry()
+        {
+            PopupList.Item item = listFields.SelectedItem;
+            return item != null ? item.Tag as AgOpenFieldEntry : null;
+        }
+
+        private void ShowSelectedField()
+        {
+            AgOpenFieldEntry entry = SelectedEntry();
+            if (entry == null)
+            {
+                labelFieldName.Text = listFields.Count == 0 ? "No fields yet" : "Pick a field";
+                labelFieldInfo.Text = listFields.Count == 0 ? "" : "Tap a field in the list to see it.";
+                preview.ShowField(null, null);
+                tileLoad.Enabled = false;
+                tileEdit.Enabled = false;
+                return;
+            }
+
+            AgOpenFieldShape shape = AgOpenFields.Shape(entry);
+            Wgs84? here = mf.AgOpenPosition();
+            GeoCoord? tractor = here.HasValue ? AgOpenFields.ToField(shape, here.Value) : null;
+
+            var info = new List<string>();
+            info.Add(shape.Fences.Count > 0 ? AgOpenFields.Area(shape.AreaM2, mf.isMetric) : "No boundary yet");
+            if (shape.Tracks.Count > 0) info.Add(shape.Tracks.Count == 1 ? "1 line" : shape.Tracks.Count.ToString(CultureInfo.CurrentCulture) + " lines");
+            if (here.HasValue)
+            {
+                double? distance = AgOpenFields.DistanceFrom(shape, here.Value);
+                if (distance.HasValue)
+                {
+                    info.Add(distance.Value <= 0 ? "you're in this field" : AgOpenFields.Distance(distance.Value, mf.isMetric) + " away");
+                }
+            }
+
+            labelFieldName.Text = entry.Folder;
+            labelFieldInfo.Text = string.Join("   ·   ", info);
+            preview.ShowField(shape, tractor);
+            tileLoad.Enabled = true;
+            tileEdit.Enabled = true;
+        }
+
+        private void TileSort_Click(object sender, EventArgs e)
+        {
+            sortNearest = !sortNearest;
+            ReadFields();
+        }
+
+        #endregion
+
+        #region Buttons
+
+        private void TileEquipment_Click(object sender, EventArgs e)
+        {
+            if (mf.isJobStarted) return;
+            // Step aside while AgOpenGPS's own picker is open, then come back with the new names.
+            Hide();
+            try
+            {
+                mf.AgOpenChangeEquipment();
+            }
+            finally
+            {
+                if (!IsDisposed)
+                {
+                    if (mf.isJobStarted)
+                    {
+                        Close();
+                    }
+                    else
+                    {
+                        ShowStartPage();
+                        Show();
+                    }
+                }
+            }
+        }
+
+        private void TileContinue_Click(object sender, EventArgs e)
+        {
+            OpenField(continueFolder, false);
+        }
+
+        private void OpenSelected(bool editBoundary)
+        {
+            AgOpenFieldEntry entry = SelectedEntry();
+            if (entry != null) OpenField(entry.Folder, editBoundary);
+        }
+
+        private void OpenField(string folder, bool editBoundary)
+        {
+            if (string.IsNullOrEmpty(folder)) return;
+            FormGPS main = mf;
+            Close();
+            main.AgOpenOpenField(folder, editBoundary);
+        }
+
+        #endregion
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            refreshTimer.Start();
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            refreshTimer.Stop();
+            base.OnFormClosed(e);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                refreshTimer.Dispose();
+                foreach (Image picture in pictures) picture.Dispose();
+                pictures.Clear();
+            }
+            base.Dispose(disposing);
+        }
+    }
+}
