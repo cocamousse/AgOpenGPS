@@ -71,8 +71,8 @@ namespace AgOpenGPS.AgOpen
             EdgeNote = masterOpen ? "Touch anywhere else to keep the field open without a job" : "Touch anywhere else to go to the map";
 
             // First page
-            labelNew = Add(new PopupLabel { Font = SmallFont, ForeColor = DimText,
-                Text = masterOpen ? "Start a job in this field" : "New job" });
+            string newText = masterOpen ? "Start a job in this field" : "New job";
+            labelNew = Add(new PopupLabel { Font = SmallFont, ForeColor = DimText, Text = newText });
             labelField = Add(new PopupLabel { Font = HeadingFont, Text = masterFolder });
             labelGuess = Add(new PopupLabel { Font = TitleFont });
             labelEquipment = Add(new PopupLabel { Font = InfoFont, ForeColor = DimText, Text = Equipment() });
