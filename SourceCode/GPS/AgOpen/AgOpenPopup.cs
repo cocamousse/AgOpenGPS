@@ -526,6 +526,36 @@ namespace AgOpenGPS.AgOpen
             }
         }
 
+        /// <summary>
+        /// The picture for AgOpen's start button on the main screen: "GO" in white
+        /// on a green rounded square.
+        /// </summary>
+        public static Bitmap GoPicture(int size)
+        {
+            var bitmap = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bitmap))
+            {
+                g.Clear(Color.Transparent);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                var square = new Rectangle(2, 2, size - 5, size - 5);
+                using (GraphicsPath path = RoundedRectangle(square, Math.Max(4, size / 5)))
+                using (var fill = new SolidBrush(AccentColor))
+                using (var edge = new Pen(Color.White, Math.Max(1.5f, size / 28f)))
+                {
+                    g.FillPath(fill, path);
+                    g.DrawPath(edge, path);
+                }
+                using (var font = new Font("Tahoma", size * 0.36f, FontStyle.Bold, GraphicsUnit.Pixel))
+                using (var text = new SolidBrush(Color.White))
+                using (var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                {
+                    g.DrawString("GO", font, text, new RectangleF(0, 1, size, size), format);
+                }
+            }
+            return bitmap;
+        }
+
         /// <summary>Draw a picture as large as fits in the box (up to twice its size), centred.</summary>
         public static void DrawPicture(Graphics g, Image picture, Rectangle box, bool dim)
         {

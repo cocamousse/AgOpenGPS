@@ -225,7 +225,7 @@ namespace AgOpenGPS.AgOpen
                 ? "Operation not known"
                 : Capitalize(operation) + "   ·   " + (string.IsNullOrEmpty(crop) ? "no crop" : crop);
             var choice = new AgOpenJobChoice { Operation = operation, Crop = crop };
-            labelFolder.Text = "New folder: " + AgOpenJobs.FolderName(masterFolder, guess, choice, DateTime.Now.Year);
+            labelFolder.Text = "New folder: " + AgOpenJobs.FolderName(masterFolder, guess, choice, DateTime.Now);
             labelHint.Text = Hint();
             labelChangeHint.Text = Hint();
             tileStart.Enabled = CanStart;

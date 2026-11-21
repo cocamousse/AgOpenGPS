@@ -117,9 +117,14 @@ namespace AgOpenGPS.AgOpen
             { "rake", new[] { "rake" } },
         };
 
+        // On this farm, implement profiles are named by type (Disk, Plow, Sprayer,
+        // Planter, Drill), or by brand when there are several of one kind (Hardi,
+        // Gator: both sprayers).
         private static readonly Dictionary<string, string> Brands = new Dictionary<string, string>
         {
             { "hardi", "sprayer" },
+            { "hardy", "sprayer" },
+            { "gator", "sprayer" },
             { "white", "planter" },
             { "kinze", "planter" },
         };
@@ -147,14 +152,7 @@ namespace AgOpenGPS.AgOpen
         private static readonly string[] DefaultCrops = { "Corn", "Soybeans", "Wheat", "Oats", "Hay", "Cover crop" };
         private static readonly string[] DefaultCropRequiredFor = { "planting", "harvest" };
 
-        // Words for the job folder name, by implement type, then by operation.
-        private static readonly Dictionary<string, string> TypeWords = new Dictionary<string, string>
-        {
-            { "sprayer", "SPRAY" }, { "planter", "PLANT" }, { "plow", "PLOW" }, { "disc", "DISC" },
-            { "harrow", "HARROW" }, { "cultivator", "CULTIVATE" }, { "chisel", "CHISEL" },
-            { "mower", "MOW" }, { "spreader", "SPREAD" }, { "rake", "RAKE" },
-        };
-
+        // A word for the job folder name when no implement profile is loaded.
         private static readonly Dictionary<string, string> OperationWords = new Dictionary<string, string>
         {
             { "spraying", "SPRAY" }, { "planting", "PLANT" }, { "tillage", "TILL" }, { "mowing", "MOW" },
@@ -222,7 +220,7 @@ namespace AgOpenGPS.AgOpen
             }
             Wgs84 origin = FieldPlaneFiles.LoadOrigin(masterDir);
 
-            string name = UniqueFolderName(fieldsDirectory, FolderName(masterFolder, guess, choice, DateTime.Now.Year));
+            string name = UniqueFolderName(fieldsDirectory, FolderName(masterFolder, guess, choice, DateTime.Now));
             string jobDir = Path.Combine(fieldsDirectory, name);
             Directory.CreateDirectory(jobDir);
             try
@@ -291,29 +289,26 @@ namespace AgOpenGPS.AgOpen
         }
 
         /// <summary>
-        /// The farm's usual name: year, field, crop, operation, e.g.
-        /// "2026 SMITH EAST CORN SPRAY". Tillage says what it was (DISC, PLOW...)
-        /// when the operation is the implement's usual one.
+        /// The farm's name for a job folder: field, crop, implement and the date,
+        /// e.g. "SMITH EAST CORN SPRAYER 10-19-26". Capitals tell job folders apart
+        /// from master fields in AgOpenGPS's own field list.
         /// </summary>
-        public static string FolderName(string fieldName, AgOpenJobGuess guess, AgOpenJobChoice choice, int year)
+        public static string FolderName(string fieldName, AgOpenJobGuess guess, AgOpenJobChoice choice, DateTime date)
         {
-            var parts = new List<string> { year.ToString(CultureInfo.InvariantCulture), fieldName };
+            var parts = new List<string> { fieldName };
             if (!string.IsNullOrEmpty(choice.Crop)) parts.Add(choice.Crop);
 
-            string word = null;
-            if (!string.IsNullOrEmpty(choice.Operation))
+            string implement = guess.Tool;
+            if (string.IsNullOrWhiteSpace(implement))
             {
-                if (guess.ImplementType != null && choice.Operation == guess.NaturalOperation
-                    && TypeWords.TryGetValue(guess.ImplementType, out string typeWord))
+                implement = "JOB";
+                if (!string.IsNullOrEmpty(choice.Operation))
                 {
-                    word = typeWord;
-                }
-                else if (!OperationWords.TryGetValue(choice.Operation, out word))
-                {
-                    word = choice.Operation;
+                    implement = OperationWords.TryGetValue(choice.Operation, out string word) ? word : choice.Operation;
                 }
             }
-            parts.Add(word ?? "JOB");
+            parts.Add(implement);
+            parts.Add(date.ToString("MM-dd-yy", CultureInfo.InvariantCulture));
             return SafeFolderName(string.Join(" ", parts).ToUpperInvariant());
         }
 

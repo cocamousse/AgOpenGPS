@@ -24,6 +24,8 @@ namespace AgOpenGPS
 
         private ToolStripMenuItem agOpenHubMenuItem;
         private ToolStripMenuItem agOpenStartMenuItem;
+        private Button agOpenGoButton;
+        private readonly System.Windows.Forms.Timer agOpenGoTimer = new System.Windows.Forms.Timer();
         private FormAgOpenStart agOpenStart;
         private FormAgOpenJobPrompt agOpenJobPrompt;
         private AgOpenFieldWatch agOpenFieldWatch;
@@ -86,13 +88,18 @@ namespace AgOpenGPS
             fileToolStripMenuItem.DropDownItems.Insert(index + 2, agOpenStartMenuItem);
             fileToolStripMenuItem.DropDownOpening += AgOpenHubMenu_DropDownOpening;
 
+            // GO: a main-screen button for the start screen, under AgIO.
+            AddAgOpenGoButton();
+
             // The start screen comes up once the main window is on screen, and
             // "Field detected" starts watching then too.
             agOpenFieldWatch = new AgOpenFieldWatch(this);
             Shown += AgOpen_Shown;
             FormClosing += (s, e) =>
             {
-                if (!e.Cancel) agOpenFieldWatch.Stop();
+                if (e.Cancel) return;
+                agOpenFieldWatch.Stop();
+                agOpenGoTimer.Stop();
             };
 
             // Bring fields and profiles up to date when AgOpenGPS starts.
@@ -100,6 +107,71 @@ namespace AgOpenGPS
         }
 
         #region Start screen
+
+        // GO sits in the bottom-left corner, under the AgIO button, as wide as that
+        // column. It's dimmed while a field is open (the start screen is for
+        // choosing one), and steps aside if AgOpenGPS's bottom button bar ever
+        // reaches that corner (narrow screens), so it never covers a button.
+        private void AddAgOpenGoButton()
+        {
+            try
+            {
+                agOpenGoButton = new Button
+                {
+                    Name = "btnAgOpenGo",
+                    BackColor = Color.Transparent,
+                    FlatStyle = FlatStyle.Flat,
+                    Image = AgOpenPopup.GoPicture(56),
+                    Margin = new Padding(0),
+                    TabStop = false,
+                    UseVisualStyleBackColor = false
+                };
+                agOpenGoButton.FlatAppearance.BorderSize = 0;
+                agOpenGoButton.FlatAppearance.CheckedBackColor = Color.Transparent;
+                agOpenGoButton.FlatAppearance.MouseDownBackColor = Color.Transparent;
+                agOpenGoButton.FlatAppearance.MouseOverBackColor = Color.Transparent;
+
+                int top = panelLeft.Bottom + 2;
+                agOpenGoButton.Bounds = new Rectangle(panelLeft.Left, top, panelLeft.Width, Math.Max(44, ClientSize.Height - top - 2));
+                agOpenGoButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+                agOpenGoButton.Click += (s, e) => ShowAgOpenStartScreen(true);
+                Controls.Add(agOpenGoButton);
+                agOpenGoButton.BringToFront();
+
+                agOpenGoTimer.Interval = 500;
+                agOpenGoTimer.Tick += (s, e) => UpdateAgOpenGoButton();
+                agOpenGoTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                Log.EventWriter("[AgOpen] The GO button couldn't be added: " + ex);
+            }
+        }
+
+        private void UpdateAgOpenGoButton()
+        {
+            if (agOpenGoButton == null || agOpenGoButton.IsDisposed) return;
+
+            bool usable = !isJobStarted && !isEasyDriveMode;
+            if (agOpenGoButton.Enabled != usable) agOpenGoButton.Enabled = usable;
+
+            bool clash = false;
+            if (panelBottom.Visible)
+            {
+                foreach (Control button in panelBottom.Controls)
+                {
+                    if (!button.Visible) continue;
+                    Rectangle where = button.Bounds;
+                    where.Offset(panelBottom.Location);
+                    if (where.IntersectsWith(agOpenGoButton.Bounds))
+                    {
+                        clash = true;
+                        break;
+                    }
+                }
+            }
+            if (agOpenGoButton.Visible == clash) agOpenGoButton.Visible = !clash;
+        }
 
         private void AgOpen_Shown(object sender, EventArgs e)
         {
