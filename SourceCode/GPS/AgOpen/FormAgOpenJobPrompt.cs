@@ -15,6 +15,9 @@ namespace AgOpenGPS.AgOpen
     /// - Change: pick the operation and crop, then Start.
     /// - Fix later at home: start anyway; the hub flags the job for review.
     /// A touch anywhere else goes back to the map without opening anything.
+    /// It's also shown when a master field was opened with AgOpenGPS's own Field
+    /// button (masterOpen): Start closes the master and opens a job folder instead,
+    /// and a touch on the map keeps the master open to edit it.
     /// </summary>
     public class FormAgOpenJobPrompt : AgOpenPopup
     {
@@ -29,6 +32,7 @@ namespace AgOpenGPS.AgOpen
         private string operation;
         private string crop;
         private bool changing;
+        private readonly bool masterOpen;
 
         // First page: the guess.
         private readonly PopupLabel labelNew;
@@ -57,16 +61,18 @@ namespace AgOpenGPS.AgOpen
         private readonly List<PopupElement> changePage = new List<PopupElement>();
         private readonly List<Image> pictures = new List<Image>();
 
-        public FormAgOpenJobPrompt(FormGPS mf, string masterFolder, AgOpenJobGuess guess) : base(mf)
+        public FormAgOpenJobPrompt(FormGPS mf, string masterFolder, AgOpenJobGuess guess, bool masterOpen = false) : base(mf)
         {
             this.masterFolder = masterFolder;
             this.guess = guess;
+            this.masterOpen = masterOpen;
             operation = guess.Operation;
             crop = guess.Crop;
-            EdgeNote = "Touch anywhere else to go to the map";
+            EdgeNote = masterOpen ? "Touch anywhere else to just edit the field" : "Touch anywhere else to go to the map";
 
             // First page
-            labelNew = Add(new PopupLabel { Font = SmallFont, ForeColor = DimText, Text = "New job" });
+            labelNew = Add(new PopupLabel { Font = SmallFont, ForeColor = DimText,
+                Text = masterOpen ? "You opened the field itself. Start a job?" : "New job" });
             labelField = Add(new PopupLabel { Font = HeadingFont, Text = masterFolder });
             labelGuess = Add(new PopupLabel { Font = TitleFont });
             labelEquipment = Add(new PopupLabel { Font = InfoFont, ForeColor = DimText, Text = Equipment() });
@@ -214,6 +220,10 @@ namespace AgOpenGPS.AgOpen
             if (AgOpenJobs.CropRequired(guess, operation) && string.IsNullOrEmpty(crop))
             {
                 return Capitalize(operation) + " needs a crop" + (changing ? "." : ": tap Change to pick it.");
+            }
+            if (masterOpen && !changing)
+            {
+                return "Work done in the field itself isn't sent to the hub. Start makes a job folder for it.";
             }
             return "";
         }

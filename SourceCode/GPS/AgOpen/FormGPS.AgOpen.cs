@@ -30,6 +30,9 @@ namespace AgOpenGPS
         private FormAgOpenJobPrompt agOpenJobPrompt;
         private AgOpenFieldWatch agOpenFieldWatch;
         private AgOpenWork agOpenWork;
+
+        /// <summary>The master field AgOpen opened to edit (Edit paths): no job prompt for it.</summary>
+        internal string AgOpenEditingMaster { get; set; }
         private bool agOpenSyncRunning;
 
         // Field folders the hub sync renamed this session: old name -> new name.
@@ -282,6 +285,7 @@ namespace AgOpenGPS
 
                 bool wasJobStarted = isJobStarted;
                 string previousFolder = currentFieldDirectory;
+                AgOpenEditingMaster = editPaths ? folder : null;
                 await FileOpenField(fieldFile);
                 AgOpenAfterFieldOpened(wasJobStarted, previousFolder);
                 if (isJobStarted && AgOpenJobs.IsJobFolder(Path.Combine(RegistrySettings.fieldsDirectory, folder)))
@@ -343,6 +347,53 @@ namespace AgOpenGPS
             {
                 Log.EventWriter("[AgOpen] The job prompt couldn't open for '" + folder + "': " + ex);
                 TimedMessageBox(4000, "AgOpen", "The job prompt couldn't open: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// A master field was opened with AgOpenGPS's own Field button. Work done in
+        /// it wouldn't reach the hub, so offer the job prompt: Start closes the master
+        /// and opens a fresh job folder; a touch on the map keeps the master open.
+        /// </summary>
+        internal void AgOpenMasterOpened(string folder)
+        {
+            try
+            {
+                if (agOpenJobPrompt != null && !agOpenJobPrompt.IsDisposed) return;
+                Log.EventWriter("[AgOpen] Master field '" + folder + "' opened with the Field button: offering a job");
+                AgOpenJobGuess guess = AgOpenJobs.Guess(RegistrySettings.toolProfileName, RegistrySettings.vehicleProfileName,
+                    tool != null ? tool.width : (double?)null);
+                var prompt = new FormAgOpenJobPrompt(this, folder, guess, true);
+                prompt.FormClosed += async (s, e) =>
+                {
+                    if (agOpenJobPrompt == prompt) agOpenJobPrompt = null;
+                    if (prompt.Choice == null)
+                    {
+                        Log.EventWriter("[AgOpen] Kept the master field '" + folder + "' open to edit it");
+                        return;
+                    }
+                    try
+                    {
+                        if (isJobStarted && string.Equals(currentFieldDirectory, folder, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (autoBtnState == btnStates.Auto) btnSectionMasterAuto.PerformClick();
+                            if (manualBtnState == btnStates.On) btnSectionMasterManual.PerformClick();
+                            await FileSaveEverythingBeforeClosingField();
+                        }
+                        AgOpenStartJob(folder, guess, prompt.Choice);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.EventWriter("[AgOpen] Closing '" + folder + "' to start a job failed: " + ex);
+                        TimedMessageBox(4000, "AgOpen", "The job couldn't be started: " + ex.Message);
+                    }
+                };
+                agOpenJobPrompt = prompt;
+                prompt.Show(this);
+            }
+            catch (Exception ex)
+            {
+                Log.EventWriter("[AgOpen] The job prompt couldn't open for '" + folder + "': " + ex);
             }
         }
 
