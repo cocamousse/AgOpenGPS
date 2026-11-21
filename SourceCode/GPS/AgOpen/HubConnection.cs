@@ -148,17 +148,19 @@ namespace AgOpenGPS.AgOpen
             wake.Set();
         }
 
-        /// <summary>Queue a request for the hub and start sending it.</summary>
-        public void Enqueue(string method, string path, object body, string what)
+        /// <summary>Queue a request for the hub and start sending it. Returns its outbox file name ("" if it couldn't be queued).</summary>
+        public string Enqueue(string method, string path, object body, string what)
         {
             try
             {
-                Outbox.Add(method, path, body, what);
+                string name = Outbox.Add(method, path, body, what);
                 Kick();
+                return name;
             }
             catch (Exception ex)
             {
                 Log.EventWriter("[AgOpen] Couldn't queue " + what + " for the hub: " + ex.Message);
+                return "";
             }
         }
 

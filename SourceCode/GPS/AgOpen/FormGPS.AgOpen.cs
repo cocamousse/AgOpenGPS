@@ -408,7 +408,17 @@ namespace AgOpenGPS
                 await AgOpenWaitForSync();
                 masterFolder = AgOpenCurrentName(masterFolder);
 
+                // A field not on the hub yet goes up first, so the job has a field to belong to.
+                string masterDir = Path.Combine(RegistrySettings.fieldsDirectory, masterFolder);
+                if (agOpenHub != null && agOpenHub.Settings.IsPaired && HubFieldState.Load(masterDir) == null)
+                {
+                    bool deferred;
+                    FieldEdits.SendChanges(agOpenHub, masterDir, true, null, out deferred);
+                }
+
                 AgOpenJob job = AgOpenJobs.Create(RegistrySettings.fieldsDirectory, masterFolder, guess, choice);
+                // Edits made in the job folder (new lines...) are counted from here.
+                FieldEdits.SetBase(Path.Combine(RegistrySettings.fieldsDirectory, job.Folder));
                 AgOpenJobs.Remember(guess.Tool, choice);
                 Log.EventWriter("[AgOpen] Job started: " + job.Folder + " (" + (job.Operation ?? "operation not known")
                     + (job.Crop != null ? ", " + job.Crop : "") + (job.FixLater ? ", fix later" : "") + ")");

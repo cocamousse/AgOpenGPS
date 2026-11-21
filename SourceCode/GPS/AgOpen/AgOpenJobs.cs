@@ -385,7 +385,7 @@ namespace AgOpenGPS.AgOpen
             try
             {
                 if (!File.Exists(LastJobPath)) return null;
-                JObject state = JObject.Parse(File.ReadAllText(LastJobPath));
+                JObject state = HubJson.ParseObject(File.ReadAllText(LastJobPath));
                 string folder = (string)state["folder"];
                 if (string.IsNullOrEmpty(folder)) return null;
                 AgOpenJob job = Read(Path.Combine(fieldsDirectory, folder));
@@ -596,7 +596,7 @@ namespace AgOpenGPS.AgOpen
         {
             try
             {
-                return File.Exists(path) ? JObject.Parse(File.ReadAllText(path)) : null;
+                return File.Exists(path) ? HubJson.ParseObject(File.ReadAllText(path)) : null;
             }
             catch (Exception ex)
             {

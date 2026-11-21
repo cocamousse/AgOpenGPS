@@ -29,6 +29,10 @@ namespace AgOpenGPS.AgOpen
     /// What's been sent is kept in agopen-work.json in the job folder, so restarts and
     /// power cuts never lose or double anything: a job left open is closed properly
     /// the next time AgOpenGPS starts.
+    ///
+    /// The same check also notes edits to whatever field is open and sends them
+    /// when it closes (FieldEdits), and sends tractor and implement profile changes
+    /// soon after they're saved (HubProfileSync).
     /// </summary>
     public class AgOpenWork
     {
@@ -47,6 +51,10 @@ namespace AgOpenGPS.AgOpen
         private Tracked current;
         private string notAJob;
         private bool problemLogged;
+
+        // Field edits: the folder open at the last check, and closed folders whose edits still need sending.
+        private string lastOpen;
+        private readonly List<string> editsToSend = new List<string>();
 
         // What's been sent for a job, kept in its folder.
         private class WorkState
@@ -135,6 +143,11 @@ namespace AgOpenGPS.AgOpen
             Tracked closing = current;
             current = null;
             if (closing != null) Close(closing);
+
+            // The field that was open has been saved and closed: send its edits too.
+            if (lastOpen != null && !editsToSend.Contains(lastOpen)) editsToSend.Add(lastOpen);
+            lastOpen = null;
+            Safely(() => SendFieldEdits(null));
         }
 
         private void Safely(Action action)
@@ -169,6 +182,55 @@ namespace AgOpenGPS.AgOpen
             string open = mf.isJobStarted ? mf.currentFieldDirectory : null;
             if (string.IsNullOrEmpty(open)) open = null;
 
+            Safely(() => CheckWork(open));
+            Safely(() => CheckFieldEdits(open));
+            Safely(CheckProfiles);
+        }
+
+        // Field edits (any field folder: a field itself or a job): noted while it's
+        // open, sent when it closes.
+        private void CheckFieldEdits(string open)
+        {
+            if (lastOpen != null && !string.Equals(open, lastOpen, StringComparison.OrdinalIgnoreCase)
+                && !editsToSend.Contains(lastOpen))
+            {
+                editsToSend.Add(lastOpen);
+            }
+            lastOpen = open;
+            if (open != null)
+            {
+                FieldEdits.Notice(Path.Combine(RegistrySettings.fieldsDirectory, open), RegistrySettings.toolProfileName,
+                    mf.tool != null ? mf.tool.width : (double?)null);
+            }
+            SendFieldEdits(open);
+        }
+
+        private void SendFieldEdits(string open)
+        {
+            HubConnection hub = Hub;
+            // While a sync runs it may be writing field folders: wait for it.
+            if (editsToSend.Count == 0 || hub == null || mf.AgOpenSyncing) return;
+            foreach (string folder in editsToSend.ToArray())
+            {
+                if (string.Equals(folder, open, StringComparison.OrdinalIgnoreCase)) continue; // opened again: when it next closes
+                bool deferred = false;
+                Safely(() => FieldEdits.SendChanges(hub, Path.Combine(RegistrySettings.fieldsDirectory, folder), true, open, out deferred));
+                if (!deferred) editsToSend.Remove(folder);
+            }
+        }
+
+        // A tractor or implement profile saved since the last look goes to the hub.
+        private void CheckProfiles()
+        {
+            HubConnection hub = Hub;
+            if (hub == null || mf.AgOpenSyncing) return;
+            HubProfileSync.SendIfChanged(hub, "vehicle", RegistrySettings.vehiclesDirectory, RegistrySettings.vehicleProfileName);
+            HubProfileSync.SendIfChanged(hub, "tool", RegistrySettings.toolsDirectory, RegistrySettings.toolProfileName);
+        }
+
+        // Coverage, sessions and finishing for the job that's open (or just closed).
+        private void CheckWork(string open)
+        {
             // The job we were following has closed (or another field was opened).
             if (current != null && (open == null || !string.Equals(open, current.Folder, StringComparison.OrdinalIgnoreCase)))
             {
@@ -273,7 +335,7 @@ namespace AgOpenGPS.AgOpen
             if (Hub == null) return;
             string path = Path.Combine(HubSettings.Folder, OpenJobFileName);
             if (!File.Exists(path)) return;
-            string folder = (string)JObject.Parse(File.ReadAllText(path))["folder"];
+            string folder = (string)HubJson.ParseObject(File.ReadAllText(path))["folder"];
             Tracked tracked = string.IsNullOrEmpty(folder) ? null : Load(folder);
             if (tracked == null)
             {
@@ -572,7 +634,7 @@ namespace AgOpenGPS.AgOpen
         {
             string path = Path.Combine(HubSettings.Folder, OpenJobFileName);
             if (!File.Exists(path)) return;
-            string open = (string)JObject.Parse(File.ReadAllText(path))["folder"];
+            string open = (string)HubJson.ParseObject(File.ReadAllText(path))["folder"];
             if (string.Equals(open, folder, StringComparison.OrdinalIgnoreCase)) File.Delete(path);
         }
 

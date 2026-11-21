@@ -33,6 +33,10 @@ namespace AgOpenGPS.AgOpen
         [JsonProperty("synced_at")]
         public string SyncedAt { get; set; } = "";
 
+        /// <summary>The folder's name as last synced with the hub: a folder renamed since is a rename to send.</summary>
+        [JsonProperty("name")]
+        public string Name { get; set; } = "";
+
         /// <summary>Files written from the hub, with their fingerprints as written.</summary>
         [JsonProperty("files")]
         public Dictionary<string, string> Files { get; set; } = new Dictionary<string, string>();
@@ -93,6 +97,7 @@ namespace AgOpenGPS.AgOpen
             bool hasHeadland = AttachHeadland(field["headland"], boundaries, plane);
             List<CTrk> tracks = Tracks(field["lines"] as JArray, plane);
             List<CFlag> flags = Flags(field["flags"] as JArray, plane);
+            bool hasTram = field["tramlines"] is JObject || field["tram_boundary"] is JObject;
 
             // Write everything into a scratch folder first, then copy it over, so the
             // field folder is never left half written.
@@ -105,6 +110,7 @@ namespace AgOpenGPS.AgOpen
                 TrackFiles.Save(temp, tracks);
                 FlagsFiles.Save(temp, flags);
                 if (hasHeadland) HeadlandFiles.Save(temp, boundaries);
+                if (hasTram) WriteTram(field["tramlines"], field["tram_boundary"], plane, temp);
                 WritePaths(field["paths"] as JArray, plane, temp);
 
                 Directory.CreateDirectory(folder);
@@ -113,7 +119,8 @@ namespace AgOpenGPS.AgOpen
                     FieldId = (string)field["id"] ?? "",
                     HubHash = hubHash,
                     Origin = new[] { origin.Value.Latitude, origin.Value.Longitude },
-                    SyncedAt = DateTime.UtcNow.ToString("o")
+                    SyncedAt = DateTime.UtcNow.ToString("o"),
+                    Name = Path.GetFileName(folder)
                 };
                 foreach (string file in Directory.GetFiles(temp))
                 {
@@ -141,6 +148,9 @@ namespace AgOpenGPS.AgOpen
                 if (!File.Exists(Path.Combine(folder, "Headland.txt"))) HeadlandFiles.Save(folder, new List<CBoundaryList>());
 
                 state.Save(folder);
+
+                // The folder now holds what the hub has: edits are counted from here.
+                FieldEdits.SetBase(folder);
                 return state;
             }
             finally
@@ -419,10 +429,31 @@ namespace AgOpenGPS.AgOpen
                 bool hasHeading = line["heading"] != null && line["heading"].Type != JTokenType.Null;
                 track.heading = hasHeading ? (double)line["heading"] : Heading(a, b);
 
-                if ((string)line["kind"] == "Curve")
+                string kind = (string)line["kind"];
+                if (kind == "Curve")
                 {
+                    // Headings as AgOpenGPS works them out when it makes a curve.
                     track.mode = TrackMode.Curve;
                     track.curvePts = WithHeadings(points, false);
+                    CABCurve.CalculateHeadings(ref track.curvePts);
+                }
+                else if (kind == "BoundaryCurve")
+                {
+                    // A curve round the boundary: A is its first point, B the one before it closes.
+                    track.mode = TrackMode.bndCurve;
+                    track.curvePts = WithHeadings(points, true);
+                    bool closed = points.Count > 3 && Math.Abs(points[0].easting - b.easting) < 0.01 && Math.Abs(points[0].northing - b.northing) < 0.01;
+                    if (closed) CABCurve.CalculateHeadingsClosedLoop(ref track.curvePts);
+                    else CABCurve.CalculateHeadings(ref track.curvePts);
+                    vec3 beforeEnd = points[Math.Max(0, points.Count - 2)];
+                    track.ptB = new vec2(beforeEnd.easting, beforeEnd.northing);
+                    track.heading = hasHeading ? (double)line["heading"] : 0;
+                }
+                else if (kind == "Pivot")
+                {
+                    // A circle round the pivot centre (the first point).
+                    track.mode = TrackMode.waterPivot;
+                    track.curvePts = new List<vec3>();
                 }
                 else
                 {
@@ -459,6 +490,48 @@ namespace AgOpenGPS.AgOpen
                 string notes = ((string)flag["notes"] ?? "").Replace(",", ";").Replace("\r", " ").Replace("\n", " ");
                 list.Add(new CFlag(position.Latitude, position.Longitude, local.Easting, local.Northing, heading,
                     FlagColor((string)flag["color"]), id, notes));
+            }
+            return list;
+        }
+
+        // Tram.txt: the two tram tracks round the boundary (outer, then inner) and the tramlines in the field.
+        private static void WriteTram(JToken lines, JToken boundary, LocalPlane plane, string folder)
+        {
+            var outer = new List<vec2>();
+            var inner = new List<vec2>();
+            List<JToken> rings = LineCoordinates(boundary);
+            if (rings.Count > 0) outer = ToLocal2(Positions(rings[0]), plane);
+            if (rings.Count > 1) inner = ToLocal2(Positions(rings[1]), plane);
+
+            var tramLines = new List<IReadOnlyList<vec2>>();
+            foreach (JToken line in LineCoordinates(lines))
+            {
+                List<vec2> points = ToLocal2(Positions(line), plane);
+                if (points.Count > 0) tramLines.Add(points);
+            }
+            TramFiles.Save(folder, outer, inner, tramLines);
+        }
+
+        // The lines of a LineString or MultiLineString (none for anything else).
+        private static List<JToken> LineCoordinates(JToken geometry)
+        {
+            var list = new List<JToken>();
+            if (geometry == null || geometry.Type != JTokenType.Object) return list;
+            JArray coordinates = geometry["coordinates"] as JArray;
+            if (coordinates == null) return list;
+            string type = (string)geometry["type"];
+            if (type == "LineString") list.Add(coordinates);
+            else if (type == "MultiLineString") list.AddRange(coordinates);
+            return list;
+        }
+
+        private static List<vec2> ToLocal2(List<Wgs84> positions, LocalPlane plane)
+        {
+            var list = new List<vec2>(positions.Count);
+            foreach (Wgs84 position in positions)
+            {
+                GeoCoord local = plane.ConvertWgs84ToGeoCoord(position);
+                list.Add(new vec2(local.Easting, local.Northing));
             }
             return list;
         }

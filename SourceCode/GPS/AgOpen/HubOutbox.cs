@@ -50,8 +50,8 @@ namespace AgOpenGPS.AgOpen
             Directory.CreateDirectory(folder);
         }
 
-        /// <summary>Queue a request. body is turned into JSON (null for none).</summary>
-        public void Add(string method, string path, object body, string what)
+        /// <summary>Queue a request. body is turned into JSON (null for none). Returns the request's file name.</summary>
+        public string Add(string method, string path, object body, string what)
         {
             var item = new HubOutboxItem
             {
@@ -65,6 +65,19 @@ namespace AgOpenGPS.AgOpen
             string name = DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff", CultureInfo.InvariantCulture)
                 + "-" + Interlocked.Increment(ref sequence).ToString("D6", CultureInfo.InvariantCulture) + ".json";
             HubFiles.WriteAllTextSafely(System.IO.Path.Combine(folder, name), JsonConvert.SerializeObject(item));
+            return name;
+        }
+
+        /// <summary>True if the hub refused the request with this file name (it was set aside).</summary>
+        public bool IsSetAside(string name)
+        {
+            return !string.IsNullOrEmpty(name) && File.Exists(System.IO.Path.Combine(setAsideFolder, System.IO.Path.GetFileName(name)));
+        }
+
+        /// <summary>True while the request with this file name is still waiting to be sent.</summary>
+        public bool IsWaiting(string name)
+        {
+            return !string.IsNullOrEmpty(name) && File.Exists(System.IO.Path.Combine(folder, System.IO.Path.GetFileName(name)));
         }
 
         /// <summary>The waiting requests' files, oldest first.</summary>

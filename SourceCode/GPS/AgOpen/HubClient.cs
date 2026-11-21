@@ -1,13 +1,38 @@
 using System;
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace AgOpenGPS.AgOpen
 {
+    /// <summary>
+    /// Reads JSON from the hub (or our own files) keeping times as the text they
+    /// are. Newtonsoft would otherwise turn "2026-11-20T14:02:00+00:00" into a
+    /// local DateTime, and (string)token would then give "11/20/2026 09:02:00",
+    /// so edit times would never compare equal and newest-edit-wins could pick
+    /// the wrong one.
+    /// </summary>
+    public static class HubJson
+    {
+        public static JToken Parse(string text)
+        {
+            using (var reader = new JsonTextReader(new StringReader(text)) { DateParseHandling = DateParseHandling.None })
+            {
+                return JToken.ReadFrom(reader);
+            }
+        }
+
+        public static JObject ParseObject(string text)
+        {
+            return Parse(text) as JObject;
+        }
+    }
+
     /// <summary>What came back from one request to the hub.</summary>
     public class HubResponse
     {
@@ -29,7 +54,7 @@ namespace AgOpenGPS.AgOpen
         {
             try
             {
-                return string.IsNullOrEmpty(Body) ? null : JToken.Parse(Body);
+                return string.IsNullOrEmpty(Body) ? null : HubJson.Parse(Body);
             }
             catch (Exception)
             {

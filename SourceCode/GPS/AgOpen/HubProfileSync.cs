@@ -19,9 +19,18 @@ namespace AgOpenGPS.AgOpen
     /// AgOpenGPS re-saves profiles when it closes even if nothing changed, so a
     /// profile only counts as changed here when its settings differ from what was
     /// last synced, not just because the file was saved again.
+    ///
+    /// Besides the sync, the profiles in use are watched: a change saved during the
+    /// day goes to the hub straight away through the outbox (SendIfChanged).
     /// </summary>
     public static class HubProfileSync
     {
+        // profiles.json is used by the sync (its own thread) and by the watch.
+        private static readonly object StateGate = new object();
+
+        // The profile files' save times when last looked at (watch only).
+        private static readonly Dictionary<string, long> watched = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
         internal class ProfileState
         {
             /// <summary>Fingerprint of the settings as last synced.</summary>
@@ -56,13 +65,73 @@ namespace AgOpenGPS.AgOpen
             // Keep the hub's hints for the job prompt (what each implement is and last did).
             AgOpenJobs.SaveHubHints(hub);
 
-            Dictionary<string, ProfileState> state = LoadState();
-            JArray deleted = hub["deleted"] as JArray ?? new JArray();
-            SyncKind(settings, key, "vehicle", "/vehicles/", context.VehiclesDirectory, hub["vehicles"] as JArray,
-                deleted, context.LoadedVehicle, context.FieldOpen, state, result);
-            SyncKind(settings, key, "tool", "/tools/", context.ToolsDirectory, hub["tools"] as JArray,
-                deleted, context.LoadedTool, context.FieldOpen, state, result);
-            SaveState(state);
+            lock (StateGate)
+            {
+                Dictionary<string, ProfileState> state = LoadState();
+                JArray deleted = hub["deleted"] as JArray ?? new JArray();
+                SyncKind(settings, key, "vehicle", "/vehicles/", context.VehiclesDirectory, hub["vehicles"] as JArray,
+                    deleted, context.LoadedVehicle, context.FieldOpen, state, result);
+                SyncKind(settings, key, "tool", "/tools/", context.ToolsDirectory, hub["tools"] as JArray,
+                    deleted, context.LoadedTool, context.FieldOpen, state, result);
+                SaveState(state);
+            }
+        }
+
+        /// <summary>
+        /// A profile in use, saved with changed settings since it was last synced,
+        /// goes to the hub now (through the outbox), stamped with when it was saved.
+        /// Cheap when the file hasn't been saved since the last look.
+        /// </summary>
+        public static void SendIfChanged(HubConnection hub, string kind, string folder, string name)
+        {
+            if (hub == null || string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(name)) return;
+            if (HubFieldWriter.SafeName(name) != name) return;
+            string file = Path.Combine(folder, name + ".xml");
+            if (!File.Exists(file)) return;
+
+            DateTime saved = File.GetLastWriteTimeUtc(file);
+            string memo = kind + ":" + name;
+            long seen;
+            if (watched.TryGetValue(memo, out seen) && seen == saved.Ticks) return;
+            if ((DateTime.UtcNow - saved).TotalSeconds < 2) return; // may still be being written
+
+            if (!System.Threading.Monitor.TryEnter(StateGate)) return; // a sync is at it: look again next time
+            try
+            {
+                watched[memo] = saved.Ticks;
+                string text = File.ReadAllText(file);
+                string hash = SettingsHash(text);
+                Dictionary<string, ProfileState> state = LoadState();
+                ProfileState known;
+                // Never synced: the next sync sorts it out against the hub's copy.
+                if (!state.TryGetValue(memo, out known) || known.SettingsHash == hash) return;
+
+                string editedAt = HubTime(saved);
+                hub.Enqueue("PUT", (kind == "vehicle" ? "/vehicles/" : "/tools/") + Uri.EscapeDataString(name),
+                    ProfileBody(kind, text, editedAt), kind + " profile " + name);
+                state[memo] = new ProfileState { SettingsHash = hash, HubStamp = editedAt };
+                SaveState(state);
+                Log.EventWriter("[AgOpen] The " + kind + " profile '" + name + "' changed: sent to the hub");
+            }
+            finally
+            {
+                System.Threading.Monitor.Exit(StateGate);
+            }
+        }
+
+        private static JObject ProfileBody(string kind, string profileXml, string editedAt)
+        {
+            var body = new JObject();
+            body["profile_xml"] = profileXml;
+            body["edited_at"] = editedAt;
+            if (kind == "tool")
+            {
+                double? width = SettingNumber(profileXml, "setVehicle_toolWidth");
+                double? sections = SettingNumber(profileXml, "setVehicle_numSections");
+                if (width.HasValue) body["width_m"] = width.Value;
+                if (sections.HasValue) body["sections"] = (int)sections.Value;
+            }
+            return body;
         }
 
         private static void SyncKind(HubSettings settings, string key, string kind, string apiPath, string folder,
@@ -157,16 +226,7 @@ namespace AgOpenGPS.AgOpen
                 if (hasLocal)
                 {
                     string editedAt = HubTime(localTime);
-                    var body = new JObject();
-                    body["profile_xml"] = localText;
-                    body["edited_at"] = editedAt;
-                    if (kind == "tool")
-                    {
-                        double? width = SettingNumber(localText, "setVehicle_toolWidth");
-                        double? sections = SettingNumber(localText, "setVehicle_numSections");
-                        if (width.HasValue) body["width_m"] = width.Value;
-                        if (sections.HasValue) body["sections"] = (int)sections.Value;
-                    }
+                    JObject body = ProfileBody(kind, localText, editedAt);
                     HubResponse sent = HubClient.Send(settings.ServerUrl, key, HttpMethod.Put, apiPath + Uri.EscapeDataString(name), body.ToString(Newtonsoft.Json.Formatting.None), 30);
                     if (!sent.Ok)
                     {
