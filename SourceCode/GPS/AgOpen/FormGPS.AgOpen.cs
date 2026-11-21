@@ -347,17 +347,16 @@ namespace AgOpenGPS
         }
 
         /// <summary>
-        /// The sections were turned on in a master field (e.g. after Edit paths).
-        /// Work done in it wouldn't reach the hub, so offer the job prompt: Start
-        /// turns the sections off, closes the master and opens a fresh job folder;
-        /// a touch on the map keeps working in the master.
+        /// "Yes, start a job" was tapped after a field itself (not a job folder) was
+        /// loaded. Show the job prompt: Start turns the sections off, closes the field
+        /// and opens a fresh job folder; a touch on the map keeps the field open.
         /// </summary>
         internal void AgOpenWorkInMaster(string folder)
         {
             try
             {
                 if (agOpenJobPrompt != null && !agOpenJobPrompt.IsDisposed) return;
-                Log.EventWriter("[AgOpen] Sections turned on in the master field '" + folder + "': offering a job");
+                Log.EventWriter("[AgOpen] Starting a job from the open field '" + folder + "'");
                 AgOpenJobGuess guess = AgOpenJobs.Guess(RegistrySettings.toolProfileName, RegistrySettings.vehicleProfileName,
                     tool != null ? tool.width : (double?)null);
                 var prompt = new FormAgOpenJobPrompt(this, folder, guess, true);
@@ -366,7 +365,7 @@ namespace AgOpenGPS
                     if (agOpenJobPrompt == prompt) agOpenJobPrompt = null;
                     if (prompt.Choice == null)
                     {
-                        Log.EventWriter("[AgOpen] Kept working in the master field '" + folder + "' (not sent to the hub)");
+                        Log.EventWriter("[AgOpen] Kept the field '" + folder + "' open without a job");
                         return;
                     }
                     try

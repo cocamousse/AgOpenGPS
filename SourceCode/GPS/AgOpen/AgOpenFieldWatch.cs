@@ -38,6 +38,7 @@ namespace AgOpenGPS.AgOpen
         private string openMaster;
         private bool openIsMaster;
         private bool askedInMaster;
+        private FormAgOpenStartJobAsk askBox;
         private DateTime fieldsReadUtc = DateTime.MinValue;
         private bool firstLook = true;
         private bool problemLogged;
@@ -65,6 +66,7 @@ namespace AgOpenGPS.AgOpen
         {
             timer.Stop();
             ClosePopup();
+            CloseAsk();
         }
 
         /// <summary>Field folders changed (e.g. after a hub sync): read them again on the next check.</summary>
@@ -104,16 +106,14 @@ namespace AgOpenGPS.AgOpen
                 if (!string.IsNullOrEmpty(openFolder)) quiet.Add(openFolder);
                 if (!string.IsNullOrEmpty(openMaster)) quiet.Add(openMaster);
 
-                // The sections were turned on in a master field (opened to edit paths,
-                // or with AgOpenGPS's own Field button): work done there never reaches
-                // the hub, so offer the job prompt, once per opening. Editing paths or
-                // the boundary never asks.
-                bool sectionsOn = mf.autoBtnState == btnStates.Auto || mf.manualBtnState == btnStates.On;
-                if (openIsMaster && !askedInMaster && sectionsOn
+                // A field itself (not a job folder) was loaded, however it was opened:
+                // ask "Start a job?" once, after AgOpenGPS's own dialogs (e.g. the draw
+                // screen) have closed. Work done without a job never reaches the hub.
+                if (openIsMaster && !askedInMaster
                     && !mf.AgOpenScreenOpen && NativeMethods.IsWindowEnabled(mf.Handle))
                 {
                     askedInMaster = true;
-                    mf.AgOpenWorkInMaster(mf.currentFieldDirectory);
+                    ShowAsk(mf.currentFieldDirectory);
                 }
                 return;
             }
@@ -121,6 +121,7 @@ namespace AgOpenGPS.AgOpen
             openMaster = null;
             openIsMaster = false;
             askedInMaster = false;
+            CloseAsk();
             if (popup != null) return;
             if (mf.isEasyDriveMode || mf.AgOpenScreenOpen) return;
             if (!NativeMethods.IsWindowEnabled(mf.Handle)) return; // an AgOpenGPS dialog is open
@@ -215,6 +216,29 @@ namespace AgOpenGPS.AgOpen
             Log.EventWriter("[AgOpen] Field detected: " + main.Entry.Folder
                 + (second != null ? " (also close: " + second.Entry.Folder + ")" : ""));
             shown.Show(mf);
+        }
+
+        private void ShowAsk(string folder)
+        {
+            CloseAsk();
+            var shown = new FormAgOpenStartJobAsk(mf, folder);
+            askBox = shown;
+            shown.FormClosed += (s, e) =>
+            {
+                if (askBox == shown) askBox = null;
+                if (shown.StartJob && !mf.IsDisposed && mf.isJobStarted
+                    && string.Equals(mf.currentFieldDirectory, folder, StringComparison.OrdinalIgnoreCase))
+                {
+                    mf.AgOpenWorkInMaster(folder);
+                }
+            };
+            shown.Show(mf);
+        }
+
+        private void CloseAsk()
+        {
+            if (askBox != null && !askBox.IsDisposed) askBox.Close();
+            askBox = null;
         }
 
         private void ClosePopup()

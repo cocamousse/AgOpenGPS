@@ -15,9 +15,9 @@ namespace AgOpenGPS.AgOpen
     /// - Change: pick the operation and crop, then Start.
     /// - Fix later at home: start anyway; the hub flags the job for review.
     /// A touch anywhere else goes back to the map without opening anything.
-    /// It's also shown when the sections are turned on in a master field (masterOpen,
-    /// e.g. after Edit paths): Start closes the master and opens a job folder instead,
-    /// and a touch on the map keeps working in the master (not sent to the hub).
+    /// It's also shown when "Yes, start a job" is tapped after a field itself was
+    /// loaded (masterOpen): Start closes the field and opens a fresh job folder,
+    /// and a touch on the map keeps the field open without a job.
     /// </summary>
     public class FormAgOpenJobPrompt : AgOpenPopup
     {
@@ -68,11 +68,11 @@ namespace AgOpenGPS.AgOpen
             this.masterOpen = masterOpen;
             operation = guess.Operation;
             crop = guess.Crop;
-            EdgeNote = masterOpen ? "Touch anywhere else to keep working without a job" : "Touch anywhere else to go to the map";
+            EdgeNote = masterOpen ? "Touch anywhere else to keep the field open without a job" : "Touch anywhere else to go to the map";
 
             // First page
             labelNew = Add(new PopupLabel { Font = SmallFont, ForeColor = DimText,
-                Text = masterOpen ? "Sections on in the field itself. Start a job?" : "New job" });
+                Text = masterOpen ? "Start a job in this field" : "New job" });
             labelField = Add(new PopupLabel { Font = HeadingFont, Text = masterFolder });
             labelGuess = Add(new PopupLabel { Font = TitleFont });
             labelEquipment = Add(new PopupLabel { Font = InfoFont, ForeColor = DimText, Text = Equipment() });
