@@ -58,7 +58,8 @@ namespace AgOpenGPS.AgOpen
             new Dictionary<string, CachedShape>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
-        /// Every folder in the fields folder that has a Field.txt. With a position,
+        /// Every master field: each folder in the fields folder that has a Field.txt
+        /// and isn't a job folder (a job is a copy of its master). With a position,
         /// each one also gets its distance from there.
         /// </summary>
         public static List<AgOpenFieldEntry> List(string fieldsDirectory, Wgs84? here)
@@ -79,7 +80,7 @@ namespace AgOpenGPS.AgOpen
 
             foreach (string folder in folders)
             {
-                if (!File.Exists(Path.Combine(folder, "Field.txt"))) continue;
+                if (!File.Exists(Path.Combine(folder, "Field.txt")) || AgOpenJobs.IsJobFolder(folder)) continue;
                 var entry = new AgOpenFieldEntry
                 {
                     Folder = Path.GetFileName(folder),
@@ -94,7 +95,7 @@ namespace AgOpenGPS.AgOpen
             return list;
         }
 
-        /// <summary>How many field folders there are (quick: doesn't read them).</summary>
+        /// <summary>How many master fields there are (quick: doesn't read them).</summary>
         public static int Count(string fieldsDirectory)
         {
             if (string.IsNullOrEmpty(fieldsDirectory) || !Directory.Exists(fieldsDirectory)) return 0;
@@ -103,7 +104,7 @@ namespace AgOpenGPS.AgOpen
                 int count = 0;
                 foreach (string folder in Directory.GetDirectories(fieldsDirectory))
                 {
-                    if (File.Exists(Path.Combine(folder, "Field.txt"))) count++;
+                    if (File.Exists(Path.Combine(folder, "Field.txt")) && !AgOpenJobs.IsJobFolder(folder)) count++;
                 }
                 return count;
             }

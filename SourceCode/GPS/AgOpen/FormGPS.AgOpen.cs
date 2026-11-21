@@ -25,6 +25,7 @@ namespace AgOpenGPS
         private ToolStripMenuItem agOpenHubMenuItem;
         private ToolStripMenuItem agOpenStartMenuItem;
         private FormAgOpenStart agOpenStart;
+        private FormAgOpenJobPrompt agOpenJobPrompt;
         private AgOpenFieldWatch agOpenFieldWatch;
         private bool agOpenSyncRunning;
 
@@ -38,10 +39,14 @@ namespace AgOpenGPS
             get { return agOpenSyncRunning; }
         }
 
-        /// <summary>The start screen is up (the "Field detected" pop-up waits for it).</summary>
-        internal bool AgOpenStartScreenOpen
+        /// <summary>The start screen or the job prompt is up ("Field detected" waits for them).</summary>
+        internal bool AgOpenScreenOpen
         {
-            get { return agOpenStart != null && !agOpenStart.IsDisposed; }
+            get
+            {
+                return (agOpenStart != null && !agOpenStart.IsDisposed)
+                    || (agOpenJobPrompt != null && !agOpenJobPrompt.IsDisposed);
+            }
         }
 
         /// <summary>AgOpenGPS is closing down.</summary>
@@ -175,19 +180,8 @@ namespace AgOpenGPS
                     return;
                 }
 
-                // A sync may be writing field folders right now: let it finish.
-                if (agOpenSyncRunning)
-                {
-                    TimedMessageBox(2000, "AgOpen Hub", "Finishing the sync with the hub...");
-                    DateTime giveUp = DateTime.UtcNow.AddSeconds(45);
-                    while (agOpenSyncRunning && DateTime.UtcNow < giveUp)
-                    {
-                        await Task.Delay(200);
-                    }
-                }
-
-                string renamed;
-                if (agOpenRenamedFolders.TryGetValue(folder, out renamed)) folder = renamed;
+                await AgOpenWaitForSync();
+                folder = AgOpenCurrentName(folder);
 
                 string fieldFile = Path.Combine(RegistrySettings.fieldsDirectory, folder, "Field.txt");
                 if (!File.Exists(fieldFile))
@@ -200,6 +194,10 @@ namespace AgOpenGPS
                 string previousFolder = currentFieldDirectory;
                 await FileOpenField(fieldFile);
                 AgOpenAfterFieldOpened(wasJobStarted, previousFolder);
+                if (isJobStarted && AgOpenJobs.IsJobFolder(Path.Combine(RegistrySettings.fieldsDirectory, folder)))
+                {
+                    AgOpenJobs.RememberOpened(folder);
+                }
 
                 if (editPaths && isJobStarted)
                 {
@@ -211,6 +209,102 @@ namespace AgOpenGPS
                 Log.EventWriter("[AgOpen] Opening field '" + folder + "' failed: " + ex);
                 TimedMessageBox(4000, "AgOpen", "The field couldn't be opened: " + ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Load a field from the AgOpen screens. A master field gets the job prompt
+        /// (each job works in its own fresh folder); a job folder just opens.
+        /// </summary>
+        internal void AgOpenLoadField(string folder)
+        {
+            try
+            {
+                if (isJobStarted)
+                {
+                    TimedMessageBox(2500, "AgOpen", "Close the field first.");
+                    return;
+                }
+                folder = AgOpenCurrentName(folder);
+                string directory = Path.Combine(RegistrySettings.fieldsDirectory, folder);
+                if (AgOpenJobs.IsJobFolder(directory))
+                {
+                    AgOpenOpenField(folder, false);
+                    return;
+                }
+                if (!File.Exists(Path.Combine(directory, "Field.txt")))
+                {
+                    TimedMessageBox(3000, "Field not found", "'" + folder + "' isn't on this tablet any more.");
+                    return;
+                }
+
+                if (agOpenJobPrompt != null && !agOpenJobPrompt.IsDisposed) agOpenJobPrompt.Close();
+                AgOpenJobGuess guess = AgOpenJobs.Guess(RegistrySettings.toolProfileName, RegistrySettings.vehicleProfileName,
+                    tool != null ? tool.width : (double?)null);
+                var prompt = new FormAgOpenJobPrompt(this, folder, guess);
+                prompt.FormClosed += (s, e) =>
+                {
+                    if (agOpenJobPrompt == prompt) agOpenJobPrompt = null;
+                    if (prompt.Choice != null) AgOpenStartJob(folder, guess, prompt.Choice);
+                };
+                agOpenJobPrompt = prompt;
+                prompt.Show(this);
+            }
+            catch (Exception ex)
+            {
+                Log.EventWriter("[AgOpen] The job prompt couldn't open for '" + folder + "': " + ex);
+                TimedMessageBox(4000, "AgOpen", "The job prompt couldn't open: " + ex.Message);
+            }
+        }
+
+        // Start was tapped: make the job folder from the master, tell the hub (through
+        // the offline queue), and open the job.
+        private async void AgOpenStartJob(string masterFolder, AgOpenJobGuess guess, AgOpenJobChoice choice)
+        {
+            try
+            {
+                if (isJobStarted)
+                {
+                    TimedMessageBox(2500, "AgOpen", "Close the field first.");
+                    return;
+                }
+                await AgOpenWaitForSync();
+                masterFolder = AgOpenCurrentName(masterFolder);
+
+                AgOpenJob job = AgOpenJobs.Create(RegistrySettings.fieldsDirectory, masterFolder, guess, choice);
+                AgOpenJobs.Remember(guess.Tool, choice);
+                Log.EventWriter("[AgOpen] Job started: " + job.Folder + " (" + (job.Operation ?? "operation not known")
+                    + (job.Crop != null ? ", " + job.Crop : "") + (job.FixLater ? ", fix later" : "") + ")");
+
+                if (agOpenHub != null && agOpenHub.Settings.IsPaired)
+                {
+                    agOpenHub.Enqueue("PUT", "/jobs/" + job.JobId, AgOpenJobs.HubBody(job), "job " + job.Folder);
+                }
+                AgOpenOpenField(job.Folder, false);
+            }
+            catch (Exception ex)
+            {
+                Log.EventWriter("[AgOpen] Starting a job in '" + masterFolder + "' failed: " + ex);
+                TimedMessageBox(4000, "AgOpen", "The job couldn't be started: " + ex.Message);
+            }
+        }
+
+        // A sync may be writing field folders right now: let it finish first.
+        private async Task AgOpenWaitForSync()
+        {
+            if (!agOpenSyncRunning) return;
+            TimedMessageBox(2000, "AgOpen Hub", "Finishing the sync with the hub...");
+            DateTime giveUp = DateTime.UtcNow.AddSeconds(45);
+            while (agOpenSyncRunning && DateTime.UtcNow < giveUp)
+            {
+                await Task.Delay(200);
+            }
+        }
+
+        // The folder's name now, if the hub sync renamed it this session.
+        private string AgOpenCurrentName(string folder)
+        {
+            string renamed;
+            return folder != null && agOpenRenamedFolders.TryGetValue(folder, out renamed) ? renamed : folder;
         }
 
         // The steps AgOpenGPS takes after its Field button has opened a field

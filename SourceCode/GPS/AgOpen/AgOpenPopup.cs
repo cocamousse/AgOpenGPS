@@ -886,6 +886,9 @@ namespace AgOpenGPS.AgOpen
 
         public bool Accent { get; set; }
         public bool Wide { get; set; }
+
+        /// <summary>For wide tiles without a picture: centre the text (e.g. choice buttons).</summary>
+        public bool Centered { get; set; }
         public Font TitleFont { get; set; } = AgOpenPopup.TitleFont;
         public Font DetailFont { get; set; } = AgOpenPopup.SmallFont;
 
@@ -978,17 +981,18 @@ namespace AgOpenGPS.AgOpen
             int textWidth = r.Right - textLeft - pad - (pictureSide > 0 ? pictureSide + pad : 0);
             if (textWidth <= 0) return;
 
+            StringAlignment across = Centered && pictureSide == 0 ? StringAlignment.Center : StringAlignment.Near;
             if (detail.Length == 0)
             {
                 AgOpenPopup.DrawText(g, title, TitleFont, titleColor, new Rectangle(textLeft, r.Top, textWidth, r.Height),
-                    StringAlignment.Near, StringAlignment.Center, false);
+                    across, StringAlignment.Center, false);
                 return;
             }
             int half = r.Height / 2;
             AgOpenPopup.DrawText(g, title, TitleFont, titleColor, new Rectangle(textLeft, r.Top + pad / 3, textWidth, half - pad / 3),
-                StringAlignment.Near, StringAlignment.Far, false);
+                across, StringAlignment.Far, false);
             AgOpenPopup.DrawText(g, detail, DetailFont, detailColor, new Rectangle(textLeft, r.Top + half, textWidth, half - pad / 3),
-                StringAlignment.Near, StringAlignment.Near, false);
+                across, StringAlignment.Near, false);
         }
     }
 

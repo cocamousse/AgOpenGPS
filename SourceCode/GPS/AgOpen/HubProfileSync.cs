@@ -53,6 +53,9 @@ namespace AgOpenGPS.AgOpen
                 return;
             }
 
+            // Keep the hub's hints for the job prompt (what each implement is and last did).
+            AgOpenJobs.SaveHubHints(hub);
+
             Dictionary<string, ProfileState> state = LoadState();
             JArray deleted = hub["deleted"] as JArray ?? new JArray();
             SyncKind(settings, key, "vehicle", "/vehicles/", context.VehiclesDirectory, hub["vehicles"] as JArray,

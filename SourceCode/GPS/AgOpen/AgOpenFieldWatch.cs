@@ -34,6 +34,8 @@ namespace AgOpenGPS.AgOpen
         private readonly HashSet<string> quiet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         private List<FieldOnTablet> fields = new List<FieldOnTablet>();
+        private string openFolder;
+        private string openMaster;
         private DateTime fieldsReadUtc = DateTime.MinValue;
         private bool firstLook = true;
         private bool problemLogged;
@@ -92,14 +94,19 @@ namespace AgOpenGPS.AgOpen
 
             if (mf.isJobStarted)
             {
-                // A field is open: close the pop-up, and keep the open field quiet so
-                // closing it later doesn't set it off straight away.
+                // A field is open: close the pop-up, and keep the open field (and, for
+                // a job, its master field) quiet so closing it later doesn't set it off
+                // straight away.
                 ClosePopup();
-                if (!string.IsNullOrEmpty(mf.currentFieldDirectory)) quiet.Add(mf.currentFieldDirectory);
+                NoteOpenField(mf.currentFieldDirectory);
+                if (!string.IsNullOrEmpty(openFolder)) quiet.Add(openFolder);
+                if (!string.IsNullOrEmpty(openMaster)) quiet.Add(openMaster);
                 return;
             }
+            openFolder = null;
+            openMaster = null;
             if (popup != null) return;
-            if (mf.isEasyDriveMode || mf.AgOpenStartScreenOpen) return;
+            if (mf.isEasyDriveMode || mf.AgOpenScreenOpen) return;
             if (!NativeMethods.IsWindowEnabled(mf.Handle)) return; // an AgOpenGPS dialog is open
 
             Wgs84? here = mf.AgOpenPosition();
@@ -149,6 +156,19 @@ namespace AgOpenGPS.AgOpen
             Show(main, second);
         }
 
+        // A field was opened (by AgOpen or AgOpenGPS's own Field button). For a job
+        // folder: note its master, and remember it for Continue.
+        private void NoteOpenField(string folder)
+        {
+            if (string.IsNullOrEmpty(folder) || string.Equals(folder, openFolder, StringComparison.OrdinalIgnoreCase)) return;
+            openFolder = folder;
+            openMaster = null;
+            AgOpenJob job = AgOpenJobs.Read(System.IO.Path.Combine(RegistrySettings.fieldsDirectory, folder));
+            if (job == null) return;
+            openMaster = job.MasterFolder;
+            AgOpenJobs.RememberOpened(folder);
+        }
+
         private void ReadFields()
         {
             var list = new List<FieldOnTablet>();
@@ -171,7 +191,7 @@ namespace AgOpenGPS.AgOpen
                 quiet.Add(main.Entry.Folder);
                 if (second != null) quiet.Add(second.Entry.Folder);
                 string chosen = shown.ChosenFolder;
-                if (!string.IsNullOrEmpty(chosen) && !mf.IsDisposed) mf.AgOpenOpenField(chosen, false);
+                if (!string.IsNullOrEmpty(chosen) && !mf.IsDisposed) mf.AgOpenLoadField(chosen);
             };
             Log.EventWriter("[AgOpen] Field detected: " + main.Entry.Folder
                 + (second != null ? " (also close: " + second.Entry.Folder + ")" : ""));

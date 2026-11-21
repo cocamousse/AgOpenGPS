@@ -74,7 +74,7 @@ namespace AgOpenGPS.AgOpen
                 Accent = true,
                 Picture = Keep(Properties.Resources.Play)
             });
-            tileContinue.Click += (s, e) => OpenField(continueFolder, false);
+            tileContinue.Click += (s, e) => OpenJob(continueFolder);
 
             startPage.AddRange(new PopupElement[] { labelHub, tileEquipment, tileFields, tileContinue });
 
@@ -234,22 +234,37 @@ namespace AgOpenGPS.AgOpen
             tileFields.Detail = count == 0 ? "No fields yet"
                 : count == 1 ? "1 field" : count.ToString(CultureInfo.CurrentCulture) + " fields";
 
-            // Continue: the last field AgOpenGPS had open (it remembers it).
-            continueFolder = mf.currentFieldDirectory ?? "";
-            bool canContinue = continueFolder.Length > 0
-                && File.Exists(Path.Combine(RegistrySettings.fieldsDirectory, continueFolder, "Field.txt"));
+            // Continue: the last job opened on this tablet, e.g. "Smith East spraying".
+            AgOpenJob job = AgOpenJobs.LastJob(RegistrySettings.fieldsDirectory);
+            bool canContinue = job != null
+                && File.Exists(Path.Combine(RegistrySettings.fieldsDirectory, job.Folder, "Field.txt"));
             if (canContinue)
             {
-                tileContinue.Title = "Continue: " + continueFolder;
-                tileContinue.Detail = "";
+                continueFolder = job.Folder;
+                tileContinue.Title = "Continue: " + job.FieldName
+                    + (string.IsNullOrEmpty(job.Operation) ? "" : " " + job.Operation);
+                tileContinue.Detail = ContinueDetail(job);
             }
             else
             {
                 continueFolder = "";
                 tileContinue.Title = "Continue";
-                tileContinue.Detail = "No recent field yet";
+                tileContinue.Detail = "No recent job yet";
             }
             tileContinue.Enabled = canContinue;
+        }
+
+        private static string ContinueDetail(AgOpenJob job)
+        {
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(job.Crop)) parts.Add(job.Crop);
+            DateTime started;
+            if (DateTime.TryParse(job.StartedAt, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out started))
+            {
+                parts.Add("started " + started.ToLocalTime().ToString("MMM d", CultureInfo.CurrentCulture));
+            }
+            parts.Add(job.Folder);
+            return string.Join("   \u00B7   ", parts);
         }
 
         private void ShowHubLine()
@@ -400,18 +415,24 @@ namespace AgOpenGPS.AgOpen
             }
         }
 
+        // Load: the job prompt for this field. Edit paths: the master field itself,
+        // with AgOpenGPS's draw screen (lines belong to the field, not to a job).
         private void OpenSelected(bool editPaths)
         {
             AgOpenFieldEntry entry = SelectedEntry();
-            if (entry != null) OpenField(entry.Folder, editPaths);
+            if (entry == null) return;
+            FormGPS main = mf;
+            Close();
+            if (editPaths) main.AgOpenOpenField(entry.Folder, true);
+            else main.AgOpenLoadField(entry.Folder);
         }
 
-        private void OpenField(string folder, bool editPaths)
+        private void OpenJob(string folder)
         {
             if (string.IsNullOrEmpty(folder)) return;
             FormGPS main = mf;
             Close();
-            main.AgOpenOpenField(folder, editPaths);
+            main.AgOpenOpenField(folder, false);
         }
 
         #endregion
