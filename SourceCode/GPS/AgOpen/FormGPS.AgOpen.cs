@@ -59,6 +59,16 @@ namespace AgOpenGPS
 
         private void InitAgOpenHub()
         {
+            // The terms were accepted at the start of FormGPS_Load (otherwise
+            // AgOpenGPS has exited). 6.8.6 never records that, so the terms screen
+            // came back on every start: remember it, so it shows only once.
+            if (!Properties.Settings.Default.setDisplay_isTermsAccepted)
+            {
+                Properties.Settings.Default.setDisplay_isTermsAccepted = true;
+                Properties.Settings.Default.Save();
+                Log.EventWriter("[AgOpen] Terms accepted: remembered, so they won't be shown again");
+            }
+
             try
             {
                 agOpenHub = new HubConnection();

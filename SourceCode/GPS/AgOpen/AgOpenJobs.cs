@@ -131,15 +131,18 @@ namespace AgOpenGPS.AgOpen
 
         private const double SprayerFromWidthM = 15.0;
 
+        // What each implement type is doing: the verb on the record. The implement
+        // itself is the tool profile (Disk, Plow, Drill...), kept on every job.
+        // Planters and drills both plant: for farmOS what matters is the crop.
         private static readonly Dictionary<string, string> Operations = new Dictionary<string, string>
         {
             { "sprayer", "spraying" },
             { "planter", "planting" },
-            { "plow", "tillage" },
-            { "disc", "tillage" },
-            { "harrow", "tillage" },
-            { "cultivator", "tillage" },
-            { "chisel", "tillage" },
+            { "plow", "plowing" },
+            { "disc", "disking" },
+            { "harrow", "harrowing" },
+            { "cultivator", "cultivating" },
+            { "chisel", "chisel plowing" },
             { "mower", "mowing" },
             { "spreader", "spreading" },
             { "rake", "raking" },
@@ -147,7 +150,10 @@ namespace AgOpenGPS.AgOpen
 
         // Order the operations are offered in.
         private static readonly string[] OperationOrder =
-            { "planting", "spraying", "tillage", "mowing", "spreading", "raking", "harvest" };
+        {
+            "planting", "spraying", "disking", "plowing", "harrowing", "cultivating", "chisel plowing",
+            "mowing", "spreading", "raking", "harvest"
+        };
 
         private static readonly string[] DefaultCrops = { "Corn", "Soybeans", "Wheat", "Oats", "Hay", "Cover crop" };
         private static readonly string[] DefaultCropRequiredFor = { "planting", "harvest" };
@@ -155,8 +161,10 @@ namespace AgOpenGPS.AgOpen
         // A word for the job folder name when no implement profile is loaded.
         private static readonly Dictionary<string, string> OperationWords = new Dictionary<string, string>
         {
-            { "spraying", "SPRAY" }, { "planting", "PLANT" }, { "tillage", "TILL" }, { "mowing", "MOW" },
-            { "spreading", "SPREAD" }, { "raking", "RAKE" }, { "harvest", "HARVEST" }, { "seeding", "SEED" },
+            { "spraying", "SPRAY" }, { "planting", "PLANT" }, { "disking", "DISK" }, { "plowing", "PLOW" },
+            { "harrowing", "HARROW" }, { "cultivating", "CULTIVATE" }, { "chisel plowing", "CHISEL" },
+            { "tillage", "TILL" }, { "mowing", "MOW" }, { "spreading", "SPREAD" }, { "raking", "RAKE" },
+            { "harvest", "HARVEST" }, { "seeding", "SEED" },
         };
 
         // Files copied from the master field into a new job folder (as AgOpenGPS's

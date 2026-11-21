@@ -294,10 +294,15 @@ namespace AgOpenGPS.AgOpen
             tileFixLater.Bounds = new Rectangle(fixLeft, buttonTop, x + w - fixLeft, buttonHeight);
 
             // Change page: operation buttons, crop buttons, then Back and Start.
+            // The buttons get as tall as there's room for (up to 62).
             const int columns = 4;
-            const int tileHeight = 62;
-            const int tileGap = 12;
+            const int tileGap = 10;
             int tileWidth = (w - (columns - 1) * tileGap) / columns;
+            int operationRows = (operationOrder.Count + columns - 1) / columns;
+            int cropRows = (cropOrder.Count + columns - 1) / columns;
+            int rows = Math.Max(1, operationRows + cropRows);
+            int room = buttonTop - gap - y - 2 * 34 - 14 - Math.Max(0, operationRows - 1 + cropRows - 1) * tileGap;
+            int tileHeight = Math.Max(40, Math.Min(62, room / rows));
             int top = y;
             labelOperation.Bounds = new Rectangle(x, top, w, 30);
             top += 34;
