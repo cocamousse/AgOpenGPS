@@ -29,6 +29,7 @@ namespace AgOpenGPS
         private FormAgOpenStart agOpenStart;
         private FormAgOpenJobPrompt agOpenJobPrompt;
         private AgOpenFieldWatch agOpenFieldWatch;
+        private AgOpenWork agOpenWork;
         private bool agOpenSyncRunning;
 
         // Field folders the hub sync renamed this session: old name -> new name.
@@ -101,15 +102,22 @@ namespace AgOpenGPS
             // GO: a main-screen button for the start screen, under AgIO.
             AddAgOpenGoButton();
 
+            // The work done in job folders goes to the hub as it happens (a job left
+            // open by a power cut is closed first).
+            agOpenWork = new AgOpenWork(this);
+            agOpenWork.Start();
+
             // The start screen comes up once the main window is on screen, and
             // "Field detected" starts watching then too.
             agOpenFieldWatch = new AgOpenFieldWatch(this);
             Shown += AgOpen_Shown;
             FormClosing += (s, e) =>
             {
+                // AgOpenGPS cancels the first close to save the field, then closes again.
                 if (e.Cancel) return;
                 agOpenFieldWatch.Stop();
                 agOpenGoTimer.Stop();
+                agOpenWork.Stop();
             };
 
             // Bring fields and profiles up to date when AgOpenGPS starts.
@@ -338,8 +346,9 @@ namespace AgOpenGPS
             }
         }
 
-        // Start was tapped: make the job folder from the master, tell the hub (through
-        // the offline queue), and open the job.
+        // Start was tapped: make the job folder from the master and open it. The job
+        // goes to the hub with its first coverage (AgOpenWork), so a job started by
+        // mistake never shows up empty in farmOS.
         private async void AgOpenStartJob(string masterFolder, AgOpenJobGuess guess, AgOpenJobChoice choice)
         {
             try
@@ -357,10 +366,6 @@ namespace AgOpenGPS
                 Log.EventWriter("[AgOpen] Job started: " + job.Folder + " (" + (job.Operation ?? "operation not known")
                     + (job.Crop != null ? ", " + job.Crop : "") + (job.FixLater ? ", fix later" : "") + ")");
 
-                if (agOpenHub != null && agOpenHub.Settings.IsPaired)
-                {
-                    agOpenHub.Enqueue("PUT", "/jobs/" + job.JobId, AgOpenJobs.HubBody(job), "job " + job.Folder);
-                }
                 AgOpenOpenField(job.Folder, false);
             }
             catch (Exception ex)
