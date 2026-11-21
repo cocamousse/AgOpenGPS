@@ -36,7 +36,8 @@ namespace AgOpenGPS.AgOpen
         private List<FieldOnTablet> fields = new List<FieldOnTablet>();
         private string openFolder;
         private string openMaster;
-        private string masterToPrompt;
+        private bool openIsMaster;
+        private bool askedInMaster;
         private DateTime fieldsReadUtc = DateTime.MinValue;
         private bool firstLook = true;
         private bool problemLogged;
@@ -103,27 +104,23 @@ namespace AgOpenGPS.AgOpen
                 if (!string.IsNullOrEmpty(openFolder)) quiet.Add(openFolder);
                 if (!string.IsNullOrEmpty(openMaster)) quiet.Add(openMaster);
 
-                // A master field opened with AgOpenGPS's own Field button (not from
-                // AgOpen's screens): offer the job prompt once AgOpenGPS's dialogs have
-                // closed, so the work goes into a job folder and reaches the hub.
-                if (masterToPrompt != null
-                    && string.Equals(masterToPrompt, mf.currentFieldDirectory, StringComparison.OrdinalIgnoreCase)
+                // The sections were turned on in a master field (opened to edit paths,
+                // or with AgOpenGPS's own Field button): work done there never reaches
+                // the hub, so offer the job prompt, once per opening. Editing paths or
+                // the boundary never asks.
+                bool sectionsOn = mf.autoBtnState == btnStates.Auto || mf.manualBtnState == btnStates.On;
+                if (openIsMaster && !askedInMaster && sectionsOn
                     && !mf.AgOpenScreenOpen && NativeMethods.IsWindowEnabled(mf.Handle))
                 {
-                    string folder = masterToPrompt;
-                    masterToPrompt = null;
-                    mf.AgOpenMasterOpened(folder);
+                    askedInMaster = true;
+                    mf.AgOpenWorkInMaster(mf.currentFieldDirectory);
                 }
                 return;
             }
-            // The master opened to edit it has closed: next time it needs a reason again.
-            if (openFolder != null && string.Equals(openFolder, mf.AgOpenEditingMaster, StringComparison.OrdinalIgnoreCase))
-            {
-                mf.AgOpenEditingMaster = null;
-            }
             openFolder = null;
             openMaster = null;
-            masterToPrompt = null;
+            openIsMaster = false;
+            askedInMaster = false;
             if (popup != null) return;
             if (mf.isEasyDriveMode || mf.AgOpenScreenOpen) return;
             if (!NativeMethods.IsWindowEnabled(mf.Handle)) return; // an AgOpenGPS dialog is open
@@ -182,19 +179,11 @@ namespace AgOpenGPS.AgOpen
             if (string.IsNullOrEmpty(folder) || string.Equals(folder, openFolder, StringComparison.OrdinalIgnoreCase)) return;
             openFolder = folder;
             openMaster = null;
-            masterToPrompt = null;
+            askedInMaster = false;
             AgOpenJob job = AgOpenJobs.Read(System.IO.Path.Combine(RegistrySettings.fieldsDirectory, folder));
-            if (job == null)
-            {
-                // A master field: fine when opened to edit it (Edit paths), otherwise
-                // the operator is asked whether to start a job.
-                if (!string.Equals(folder, mf.AgOpenEditingMaster, StringComparison.OrdinalIgnoreCase)
-                    && !AgOpenJobs.IsJobFolder(System.IO.Path.Combine(RegistrySettings.fieldsDirectory, folder)))
-                {
-                    masterToPrompt = folder;
-                }
-                return;
-            }
+            openIsMaster = job == null
+                && !AgOpenJobs.IsJobFolder(System.IO.Path.Combine(RegistrySettings.fieldsDirectory, folder));
+            if (job == null) return;
             openMaster = job.MasterFolder;
             AgOpenJobs.RememberOpened(folder);
         }

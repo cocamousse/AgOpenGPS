@@ -15,9 +15,9 @@ namespace AgOpenGPS.AgOpen
     /// - Change: pick the operation and crop, then Start.
     /// - Fix later at home: start anyway; the hub flags the job for review.
     /// A touch anywhere else goes back to the map without opening anything.
-    /// It's also shown when a master field was opened with AgOpenGPS's own Field
-    /// button (masterOpen): Start closes the master and opens a job folder instead,
-    /// and a touch on the map keeps the master open to edit it.
+    /// It's also shown when the sections are turned on in a master field (masterOpen,
+    /// e.g. after Edit paths): Start closes the master and opens a job folder instead,
+    /// and a touch on the map keeps working in the master (not sent to the hub).
     /// </summary>
     public class FormAgOpenJobPrompt : AgOpenPopup
     {
@@ -68,11 +68,11 @@ namespace AgOpenGPS.AgOpen
             this.masterOpen = masterOpen;
             operation = guess.Operation;
             crop = guess.Crop;
-            EdgeNote = masterOpen ? "Touch anywhere else to just edit the field" : "Touch anywhere else to go to the map";
+            EdgeNote = masterOpen ? "Touch anywhere else to keep working without a job" : "Touch anywhere else to go to the map";
 
             // First page
             labelNew = Add(new PopupLabel { Font = SmallFont, ForeColor = DimText,
-                Text = masterOpen ? "You opened the field itself. Start a job?" : "New job" });
+                Text = masterOpen ? "Sections on in the field itself. Start a job?" : "New job" });
             labelField = Add(new PopupLabel { Font = HeadingFont, Text = masterFolder });
             labelGuess = Add(new PopupLabel { Font = TitleFont });
             labelEquipment = Add(new PopupLabel { Font = InfoFont, ForeColor = DimText, Text = Equipment() });
@@ -223,7 +223,7 @@ namespace AgOpenGPS.AgOpen
             }
             if (masterOpen && !changing)
             {
-                return "Work done in the field itself isn't sent to the hub. Start makes a job folder for it.";
+                return "Work done without a job isn't sent to the hub. Start makes a job folder and opens it.";
             }
             return "";
         }
