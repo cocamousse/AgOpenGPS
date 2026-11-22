@@ -15,6 +15,7 @@ namespace AgOpenGPS.AgOpen
     {
         private readonly HubConnection hub;
         private readonly Action syncNow;
+        private readonly Func<bool> syncRunning;
         private readonly TextBox textServer = new TextBox();
         private readonly TextBox textCode = new TextBox();
         private readonly Button buttonPair = new Button();
@@ -26,10 +27,17 @@ namespace AgOpenGPS.AgOpen
         private readonly Label labelStatus = new Label();
         private readonly Timer refreshTimer = new Timer();
 
-        public FormHubSettings(HubConnection hub, Action syncNow)
+        // A sync started from this window, and the last sync before it, so the
+        // message can say when it's done.
+        private bool syncAsked;
+        private HubSyncResult syncBefore;
+
+        /// <param name="syncRunning">True while AgOpenGPS is running a sync (it may not have reached the hub yet).</param>
+        public FormHubSettings(HubConnection hub, Action syncNow, Func<bool> syncRunning)
         {
             this.hub = hub;
             this.syncNow = syncNow;
+            this.syncRunning = syncRunning;
             BuildLayout();
 
             textServer.Text = hub.Settings.ServerUrl;
@@ -192,7 +200,8 @@ namespace AgOpenGPS.AgOpen
                 text += "   Last heard from the hub: " + contact.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
             }
             HubSyncResult sync = hub.LastSync;
-            if (hub.Syncing)
+            bool syncing = hub.Syncing || (syncRunning != null && syncRunning());
+            if (syncing)
             {
                 text += "\r\nSyncing fields and profiles...";
             }
@@ -220,7 +229,45 @@ namespace AgOpenGPS.AgOpen
                     break;
             }
             buttonUnpair.Enabled = settings.IsPaired;
-            buttonSync.Enabled = settings.IsPaired && !hub.Syncing;
+            buttonSync.Enabled = settings.IsPaired && !syncing;
+
+            if (syncAsked && !syncing)
+            {
+                syncAsked = false;
+                ShowSyncDone(sync);
+            }
+        }
+
+        // The sync started here is over: say how it went (the details are in the status below).
+        private void ShowSyncDone(HubSyncResult sync)
+        {
+            if (sync == null || ReferenceEquals(sync, syncBefore))
+            {
+                ShowMessage("The sync stopped before it finished. See the event log.", false);
+                return;
+            }
+            string at = sync.FinishedUtc.ToLocalTime().ToString("HH:mm", CultureInfo.InvariantCulture);
+            if (!sync.Completed)
+            {
+                ShowMessage("The sync didn't finish: see below.", false);
+            }
+            else if (sync.Problems.Count > 0)
+            {
+                ShowMessage("Sync finished at " + at + ", with a problem: see below.", false);
+            }
+            else
+            {
+                ShowMessage("Sync finished at " + at + ".", true);
+            }
+        }
+
+        private void StartSync(string message)
+        {
+            if (syncNow == null) return;
+            syncBefore = hub.LastSync;
+            syncAsked = true;
+            ShowMessage(message, true);
+            syncNow();
         }
 
         private void ShowMessage(string message, bool good)
@@ -257,8 +304,7 @@ namespace AgOpenGPS.AgOpen
                 {
                     textCode.Text = "";
                     textServer.Text = hub.Settings.ServerUrl;
-                    ShowMessage("Paired. This tablet is '" + hub.Settings.TabletLabel + "' on the hub. Getting fields and profiles...", true);
-                    if (syncNow != null) syncNow();
+                    StartSync("Paired. This tablet is '" + hub.Settings.TabletLabel + "' on the hub. Getting fields and profiles...");
                 }
                 else
                 {
@@ -298,9 +344,7 @@ namespace AgOpenGPS.AgOpen
 
         private void ButtonSync_Click(object sender, EventArgs e)
         {
-            if (syncNow == null) return;
-            ShowMessage("Syncing with the hub...", true);
-            syncNow();
+            StartSync("Syncing with the hub...");
             ShowStatus();
         }
 

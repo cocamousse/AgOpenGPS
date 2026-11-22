@@ -517,7 +517,8 @@ namespace AgOpenGPS
                 }
                 if (!quiet || result.ChangedAnything || result.Problems.Count > 0)
                 {
-                    TimedMessageBox(3000, "AgOpen Hub", result.Summary());
+                    string summary = result.Summary();
+                    TimedMessageBox(AgOpenReadingTime(summary), "AgOpen Hub", summary);
                 }
             }
             catch (Exception ex)
@@ -530,6 +531,13 @@ namespace AgOpenGPS
                 if (agOpenStart != null && !agOpenStart.IsDisposed) agOpenStart.RefreshAfterSync();
                 if (agOpenFieldWatch != null) agOpenFieldWatch.FieldsChanged();
             }
+        }
+
+        // How long a message stays up: long enough to read in the cab (it can't be
+        // tapped away), so a longer one stays longer.
+        private static int AgOpenReadingTime(string text)
+        {
+            return Math.Min(4000 + 60 * (text ?? "").Length, 12000);
         }
 
         // Folders renamed by the sync: remember the new names, and keep AgOpenGPS's
@@ -624,7 +632,7 @@ namespace AgOpenGPS
                 TimedMessageBox(4000, "AgOpen Hub", "The hub connection didn't start. See the event log.");
                 return;
             }
-            using (var form = new FormHubSettings(agOpenHub, () => SyncWithAgOpenHub(false)))
+            using (var form = new FormHubSettings(agOpenHub, () => SyncWithAgOpenHub(false), () => AgOpenSyncing))
             {
                 form.ShowDialog(this);
             }
