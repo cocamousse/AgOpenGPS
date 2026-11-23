@@ -139,6 +139,9 @@ namespace AgOpenGPS
             // GO: a main-screen button for the start screen, under AgIO.
             AddAgOpenGoButton();
 
+            // Labels for AgOpenGPS's buttons (the labels version).
+            InitAgOpenLabels();
+
             // The work done in job folders goes to the hub as it happens (a job left
             // open by a power cut is closed first).
             agOpenWork = new AgOpenWork(this);
