@@ -17,6 +17,10 @@ namespace AgOpenGPS.AgOpen
     ///   under ShowMaxSpeedKmh), so driving past fields on the road doesn't set it off.
     /// After Load, Ignore or the 30 seconds run out, that field stays quiet until
     /// the tractor has been more than QuietUntilM away from it.
+    ///
+    /// With a field open it also asks "Start a job?" when a field itself (not a job
+    /// folder) opens, and "Make starting paths?" when a field that had no lines when
+    /// it opened has a boundary (straight away, or once the boundary is made).
     /// </summary>
     public class AgOpenFieldWatch
     {
@@ -39,6 +43,9 @@ namespace AgOpenGPS.AgOpen
         private bool openIsMaster;
         private bool askedInMaster;
         private FormAgOpenStartJobAsk askBox;
+        private bool pathsWanted;
+        private bool pathsAsked;
+        private FormAgOpenStartingPaths pathsBox;
         private DateTime fieldsReadUtc = DateTime.MinValue;
         private bool firstLook = true;
         private bool problemLogged;
@@ -67,6 +74,7 @@ namespace AgOpenGPS.AgOpen
             timer.Stop();
             ClosePopup();
             CloseAsk();
+            ClosePaths();
         }
 
         /// <summary>Field folders changed (e.g. after a hub sync): read them again on the next check.</summary>
@@ -115,13 +123,25 @@ namespace AgOpenGPS.AgOpen
                     askedInMaster = true;
                     ShowAsk(mf.currentFieldDirectory);
                 }
+
+                // A field that had no lines when it opened: once it has a boundary (it may
+                // just have been made), offer starting paths, once. Not on top of "Start a
+                // job?", the AgOpen screens, or AgOpenGPS's boundary and line screens.
+                if (pathsWanted && !pathsAsked && askBox == null && pathsBox == null
+                    && !mf.AgOpenScreenOpen && !mf.AgOpenFieldEditScreenOpen && NativeMethods.IsWindowEnabled(mf.Handle))
+                {
+                    if (mf.trk.gArr.Count > 0) pathsWanted = false; // lines were made another way: don't ask
+                    else if (mf.bnd.bndList.Count > 0) ShowPaths(mf.currentFieldDirectory);
+                }
                 return;
             }
             openFolder = null;
             openMaster = null;
             openIsMaster = false;
             askedInMaster = false;
+            pathsWanted = false;
             CloseAsk();
+            ClosePaths();
             if (popup != null) return;
             if (mf.isEasyDriveMode || mf.AgOpenScreenOpen) return;
             if (!NativeMethods.IsWindowEnabled(mf.Handle)) return; // an AgOpenGPS dialog is open
@@ -181,6 +201,13 @@ namespace AgOpenGPS.AgOpen
             openFolder = folder;
             openMaster = null;
             askedInMaster = false;
+
+            // Starting paths are offered only to a field that has no lines as it opens,
+            // and not when it was opened straight into the draw screen (Edit paths).
+            bool editPaths = mf.AgOpenTookEditPaths(folder);
+            pathsWanted = mf.trk.gArr.Count == 0 && !editPaths;
+            pathsAsked = false;
+            ClosePaths();
             AgOpenJob job = AgOpenJobs.Read(System.IO.Path.Combine(RegistrySettings.fieldsDirectory, folder));
             openIsMaster = job == null
                 && !AgOpenJobs.IsJobFolder(System.IO.Path.Combine(RegistrySettings.fieldsDirectory, folder));
@@ -233,6 +260,38 @@ namespace AgOpenGPS.AgOpen
                 }
             };
             shown.Show(mf);
+        }
+
+        private void ShowPaths(string folder)
+        {
+            pathsAsked = true;
+            ClosePaths();
+            AgOpenStartingPaths.Plan plan = mf.AgOpenPlanStartingPaths();
+            if (plan == null) return;
+
+            var fences = new List<List<vec3>>();
+            foreach (CBoundaryList boundary in mf.bnd.bndList) fences.Add(new List<vec3>(boundary.fenceLine));
+
+            var shown = new FormAgOpenStartingPaths(mf, folder, plan, fences);
+            pathsBox = shown;
+            shown.FormClosed += (s, e) =>
+            {
+                if (pathsBox == shown) pathsBox = null;
+                if (mf.IsDisposed || !mf.isJobStarted
+                    || !string.Equals(mf.currentFieldDirectory, folder, StringComparison.OrdinalIgnoreCase)) return;
+                if (shown.Choice == FormAgOpenStartingPaths.Answer.Make) mf.AgOpenAddStartingPaths();
+                // The draw screen waits until this box has gone.
+                else if (shown.Choice == FormAgOpenStartingPaths.Answer.Draw) mf.BeginInvoke((Action)mf.AgOpenDrawPaths);
+            };
+            Log.EventWriter("[AgOpen] Offering starting paths for '" + folder + "'"
+                + (plan.Side != null ? "" : " (border path only: no clear side)"));
+            shown.Show(mf);
+        }
+
+        private void ClosePaths()
+        {
+            if (pathsBox != null && !pathsBox.IsDisposed) pathsBox.Close();
+            pathsBox = null;
         }
 
         private void CloseAsk()

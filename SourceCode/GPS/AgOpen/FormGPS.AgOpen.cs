@@ -32,6 +32,18 @@ namespace AgOpenGPS
         private AgOpenWork agOpenWork;
         private bool agOpenSyncRunning;
 
+        // The field the draw screen was opened for straight away (Show fields: Edit paths).
+        private string agOpenEditPathsFolder;
+
+        // AgOpenGPS's screens for making a field, its boundary or its lines: the
+        // "Make starting paths?" box waits until they're closed.
+        private static readonly HashSet<string> AgOpenFieldEditScreens = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "FormABDraw", "FormBoundary", "FormBoundaryPlayer", "FormBuildBoundaryFromTracks", "FormBuildTracks",
+            "FormCopyTracks", "FormFieldDir", "FormFieldExisting", "FormFieldIsoXml", "FormFieldKML",
+            "FormHeadAche", "FormHeadLine", "FormMap", "FormTram", "FormTramLine"
+        };
+
         // Field folders the hub sync renamed this session: old name -> new name.
         private readonly Dictionary<string, string> agOpenRenamedFolders =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -50,6 +62,31 @@ namespace AgOpenGPS
                 return (agOpenStart != null && !agOpenStart.IsDisposed)
                     || (agOpenJobPrompt != null && !agOpenJobPrompt.IsDisposed);
             }
+        }
+
+        /// <summary>One of AgOpenGPS's screens for making a field's boundary or lines is open.</summary>
+        internal bool AgOpenFieldEditScreenOpen
+        {
+            get
+            {
+                foreach (Form form in Application.OpenForms)
+                {
+                    if (form.Visible && AgOpenFieldEditScreens.Contains(form.GetType().Name)) return true;
+                }
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// True (once) if this field was opened straight into the draw screen with
+        /// Edit paths: then it isn't offered starting paths.
+        /// </summary>
+        internal bool AgOpenTookEditPaths(string folder)
+        {
+            bool took = agOpenEditPathsFolder != null
+                && string.Equals(agOpenEditPathsFolder, folder, StringComparison.OrdinalIgnoreCase);
+            agOpenEditPathsFolder = null;
+            return took;
         }
 
         /// <summary>AgOpenGPS is closing down.</summary>
@@ -282,6 +319,7 @@ namespace AgOpenGPS
 
                 bool wasJobStarted = isJobStarted;
                 string previousFolder = currentFieldDirectory;
+                agOpenEditPathsFolder = editPaths ? folder : null;
                 await FileOpenField(fieldFile);
                 AgOpenAfterFieldOpened(wasJobStarted, previousFolder);
                 if (isJobStarted && AgOpenJobs.IsJobFolder(Path.Combine(RegistrySettings.fieldsDirectory, folder)))
@@ -299,6 +337,59 @@ namespace AgOpenGPS
                 Log.EventWriter("[AgOpen] Opening field '" + folder + "' failed: " + ex);
                 TimedMessageBox(4000, "AgOpen", "The field couldn't be opened: " + ex.Message);
             }
+        }
+
+        /// <summary>
+        /// The starting paths for the open field (a path round the border and a curve
+        /// along the longest side), worked out but not added. Null without a boundary.
+        /// </summary>
+        internal AgOpenStartingPaths.Plan AgOpenPlanStartingPaths()
+        {
+            if (!isJobStarted || bnd.bndList.Count == 0) return null;
+            return AgOpenStartingPaths.Make(bnd.bndList[0].fenceLine, points => curve.AddFirstLastPoints(ref points));
+        }
+
+        /// <summary>
+        /// Yes on "Make starting paths?": add the path round the border and the curve
+        /// along the longest side to the open field, as if made on the draw screen, and
+        /// select the curve. They reach the hub like any other line.
+        /// </summary>
+        internal void AgOpenAddStartingPaths()
+        {
+            try
+            {
+                if (!isJobStarted || trk.gArr.Count > 0) return; // lines were made meanwhile: leave them be
+                AgOpenStartingPaths.Plan plan = AgOpenPlanStartingPaths();
+                if (plan == null) return;
+
+                trk.gArr.Add(plan.Border);
+                if (plan.Side != null) trk.gArr.Add(plan.Side);
+                trk.idx = trk.gArr.Count - 1;
+                FileSaveTracks();
+
+                // As after the draw screen: guidance works its lines out again.
+                curve.isCurveValid = false;
+                ABLine.isABValid = false;
+                twoSecondCounter = 100;
+                PanelUpdateRightAndBottom();
+
+                string made = "'" + plan.Border.name + "'" + (plan.Side != null ? " and '" + plan.Side.name + "'" : "");
+                Log.EventWriter("[AgOpen] Starting paths made in '" + currentFieldDirectory + "': " + made
+                    + (plan.Side != null ? " (side " + Math.Round(plan.SideLengthM) + " m)" : " (no clear side for a curve)"));
+                string text = "Made " + made + "." + (plan.Side != null ? " The curve is selected." : "");
+                TimedMessageBox(AgOpenReadingTime(text), "Starting paths", text);
+            }
+            catch (Exception ex)
+            {
+                Log.EventWriter("[AgOpen] Starting paths couldn't be made: " + ex);
+                TimedMessageBox(4000, "AgOpen", "The starting paths couldn't be made: " + ex.Message);
+            }
+        }
+
+        /// <summary>Create paths on "Make starting paths?": AgOpenGPS's draw screen for the open field.</summary>
+        internal void AgOpenDrawPaths()
+        {
+            if (isJobStarted && !IsDisposed) btnABDraw_Click(this, EventArgs.Empty);
         }
 
         /// <summary>

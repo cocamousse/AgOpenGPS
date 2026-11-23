@@ -9,7 +9,8 @@ namespace AgOpenGPS.AgOpen
     /// <summary>
     /// A small drawing of a field, north up, for the pop-ups: the boundary filled
     /// in, inner boundaries cut out, guidance lines in orange, and a blue dot where
-    /// the tractor is when it's in or near the field.
+    /// the tractor is when it's in or near the field. A stretch of boundary can be
+    /// marked in thick blue (the side a starting-paths curve follows).
     /// </summary>
     public class FieldPreview : PopupElement
     {
@@ -18,9 +19,11 @@ namespace AgOpenGPS.AgOpen
         private static readonly Color FieldEdge = Color.FromArgb(30, 70, 35);
         private static readonly Color LineColor = Color.FromArgb(225, 115, 0);
         private static readonly Color HereColor = Color.FromArgb(20, 110, 230);
+        private static readonly Color MarkColor = Color.FromArgb(20, 110, 230);
 
         private AgOpenFieldShape shape;
         private GeoCoord? here;
+        private List<vec3> mark;
 
         /// <summary>Shown when no field is picked.</summary>
         public string EmptyText { get; set; } = "";
@@ -30,6 +33,13 @@ namespace AgOpenGPS.AgOpen
         {
             shape = field;
             here = tractor;
+            Invalidate();
+        }
+
+        /// <summary>Mark a stretch of the boundary in thick blue (null for none).</summary>
+        public void ShowMark(List<vec3> points)
+        {
+            mark = points;
             Invalidate();
         }
 
@@ -150,6 +160,19 @@ namespace AgOpenGPS.AgOpen
                         for (int i = 0; i < track.curvePts.Count; i++) points[i] = Map(track.curvePts[i].easting, track.curvePts[i].northing);
                         g.DrawLines(line, points);
                     }
+                }
+            }
+
+            if (mark != null && mark.Count > 1)
+            {
+                var points = new PointF[mark.Count];
+                for (int i = 0; i < mark.Count; i++) points[i] = Map(mark[i].easting, mark[i].northing);
+                using (var pen = new Pen(MarkColor, 7f))
+                {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    pen.LineJoin = LineJoin.Round;
+                    g.DrawLines(pen, points);
                 }
             }
 
