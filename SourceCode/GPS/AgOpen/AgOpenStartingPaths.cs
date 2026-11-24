@@ -18,6 +18,12 @@ namespace AgOpenGPS.AgOpen
     /// The curve leaves out the corners themselves; like every AgOpenGPS curve it
     /// runs on straight past both ends. A round field has no corners, so it gets the
     /// border path only.
+    ///
+    /// Both lines sit on the boundary itself. AgOpenGPS 6.8 never guides along a
+    /// line: every pass is half a pass width (or 1 1/2, 2 1/2...) off it (CABCurve,
+    /// CABLine: distAway += 0.5 * widthMinusOverlap). So the first pass along either
+    /// line runs the implement's edge along the boundary, and the passes inside a
+    /// headland made a whole number of passes wide line up with the headland's edge.
     /// </summary>
     public static class AgOpenStartingPaths
     {

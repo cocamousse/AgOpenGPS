@@ -46,6 +46,7 @@ namespace AgOpenGPS.AgOpen
         private bool pathsWanted;
         private bool pathsAsked;
         private FormAgOpenStartingPaths pathsBox;
+        private FormAgOpenHeadlandAsk headlandBox;
         private DateTime fieldsReadUtc = DateTime.MinValue;
         private bool firstLook = true;
         private bool problemLogged;
@@ -279,7 +280,14 @@ namespace AgOpenGPS.AgOpen
                 if (pathsBox == shown) pathsBox = null;
                 if (mf.IsDisposed || !mf.isJobStarted
                     || !string.Equals(mf.currentFieldDirectory, folder, StringComparison.OrdinalIgnoreCase)) return;
-                if (shown.Choice == FormAgOpenStartingPaths.Answer.Make) mf.AgOpenAddStartingPaths();
+                if (shown.Choice == FormAgOpenStartingPaths.Answer.Make)
+                {
+                    // Then, for a field without a headland: "Would you like to create
+                    // headlands?", once this box has gone.
+                    bool askHeadland = !mf.AgOpenHasHeadland;
+                    string made = mf.AgOpenAddStartingPaths(!askHeadland);
+                    if (made != null && askHeadland) mf.BeginInvoke((Action)(() => ShowHeadland(folder, made)));
+                }
                 // The draw screen waits until this box has gone.
                 else if (shown.Choice == FormAgOpenStartingPaths.Answer.Draw) mf.BeginInvoke((Action)mf.AgOpenDrawPaths);
             };
@@ -288,10 +296,32 @@ namespace AgOpenGPS.AgOpen
             shown.Show(mf);
         }
 
+        private void ShowHeadland(string folder, string made)
+        {
+            if (mf.IsDisposed || !mf.isJobStarted || mf.bnd.bndList.Count == 0 || mf.AgOpenHasHeadland
+                || !string.Equals(mf.currentFieldDirectory, folder, StringComparison.OrdinalIgnoreCase)) return;
+
+            if (headlandBox != null && !headlandBox.IsDisposed) headlandBox.Close();
+            var shown = new FormAgOpenHeadlandAsk(mf, made);
+            headlandBox = shown;
+            shown.FormClosed += (s, e) =>
+            {
+                if (headlandBox == shown) headlandBox = null;
+                if (shown.Passes < 1 || mf.IsDisposed || !mf.isJobStarted
+                    || !string.Equals(mf.currentFieldDirectory, folder, StringComparison.OrdinalIgnoreCase)) return;
+                mf.AgOpenMakeHeadland(shown.Passes);
+            };
+            Log.EventWriter("[AgOpen] Offering a headland for '" + folder + "'");
+            shown.Show(mf);
+        }
+
+        // Closes "Make starting paths?" and "Would you like to create headlands?".
         private void ClosePaths()
         {
             if (pathsBox != null && !pathsBox.IsDisposed) pathsBox.Close();
             pathsBox = null;
+            if (headlandBox != null && !headlandBox.IsDisposed) headlandBox.Close();
+            headlandBox = null;
         }
 
         private void CloseAsk()

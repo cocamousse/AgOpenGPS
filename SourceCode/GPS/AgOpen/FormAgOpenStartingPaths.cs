@@ -7,7 +7,8 @@ namespace AgOpenGPS.AgOpen
     /// <summary>
     /// "Make starting paths?": shown when an open field has a boundary but no lines
     /// (it was loaded without any, or its boundary was just made). Yes makes a path
-    /// round the border and a curve along the longest side; Create paths opens
+    /// round the border and a curve along the longest side, then (for a field with
+    /// no headland) asks "Would you like to create headlands?"; Create paths opens
     /// AgOpenGPS's draw screen; No, a touch on the map or 10 seconds closes it.
     /// The drawing shows what Yes makes. AgOpenFieldWatch decides when to show it.
     /// </summary>

@@ -352,15 +352,16 @@ namespace AgOpenGPS
         /// <summary>
         /// Yes on "Make starting paths?": add the path round the border and the curve
         /// along the longest side to the open field, as if made on the draw screen, and
-        /// select the curve. They reach the hub like any other line.
+        /// select the curve. They reach the hub like any other line. Returns what was
+        /// made (for the headland question), or null; tell also shows it in a message.
         /// </summary>
-        internal void AgOpenAddStartingPaths()
+        internal string AgOpenAddStartingPaths(bool tell)
         {
             try
             {
-                if (!isJobStarted || trk.gArr.Count > 0) return; // lines were made meanwhile: leave them be
+                if (!isJobStarted || trk.gArr.Count > 0) return null; // lines were made meanwhile: leave them be
                 AgOpenStartingPaths.Plan plan = AgOpenPlanStartingPaths();
-                if (plan == null) return;
+                if (plan == null) return null;
 
                 trk.gArr.Add(plan.Border);
                 if (plan.Side != null) trk.gArr.Add(plan.Side);
@@ -377,12 +378,78 @@ namespace AgOpenGPS
                 Log.EventWriter("[AgOpen] Starting paths made in '" + currentFieldDirectory + "': " + made
                     + (plan.Side != null ? " (side " + Math.Round(plan.SideLengthM) + " m)" : " (no clear side for a curve)"));
                 string text = "Made " + made + "." + (plan.Side != null ? " The curve is selected." : "");
-                TimedMessageBox(AgOpenReadingTime(text), "Starting paths", text);
+                if (tell) TimedMessageBox(AgOpenReadingTime(text), "Starting paths", text);
+                return text;
             }
             catch (Exception ex)
             {
                 Log.EventWriter("[AgOpen] Starting paths couldn't be made: " + ex);
                 TimedMessageBox(4000, "AgOpen", "The starting paths couldn't be made: " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>The open field already has a headland.</summary>
+        internal bool AgOpenHasHeadland
+        {
+            get { return bnd.bndList.Count > 0 && bnd.bndList[0].hdLine.Count > 0; }
+        }
+
+        /// <summary>
+        /// How wide a headland this many passes is, as AgOpenGPS shows it, e.g. "120 ft".
+        /// A pass is the implement's width less its overlap, as on the headland screen.
+        /// </summary>
+        internal string AgOpenHeadlandWidthText(int passes)
+        {
+            return AgOpenDistanceText(passes * (tool.width - tool.overlap));
+        }
+
+        private string AgOpenDistanceText(double metres)
+        {
+            return (metres * m2FtOrM).ToString("0.#", CultureInfo.CurrentCulture) + unitsFtM;
+        }
+
+        /// <summary>
+        /// Yes on "Would you like to create headlands?": a headland this many passes
+        /// (implement widths less overlap) in from the outer boundary, made and saved
+        /// as AgOpenGPS's headland screen would, with the Headland button on after.
+        /// It reaches the hub like any other headland.
+        /// </summary>
+        internal void AgOpenMakeHeadland(int passes)
+        {
+            try
+            {
+                if (!isJobStarted || bnd.bndList.Count == 0 || passes < 1) return;
+                if (AgOpenHasHeadland) return; // one was made meanwhile: leave it be
+
+                double distance = passes * (tool.width - tool.overlap);
+                string wide = passes + (passes == 1 ? " pass" : " passes") + " (" + AgOpenHeadlandWidthText(passes) + ")";
+                List<vec3> line = AgOpenHeadland.Make(bnd.bndList[0].fenceLine, distance);
+                if (line == null)
+                {
+                    Log.EventWriter("[AgOpen] No headland in '" + currentFieldDirectory + "': too small for " + wide);
+                    TimedMessageBox(4000, "Headland", "This field is too small for a headland " + wide + " wide.");
+                    return;
+                }
+
+                bnd.bndList[0].hdLine.Clear();
+                bnd.bndList[0].hdLine.AddRange(line);
+                FileSaveHeadland();
+
+                // As after the headland screen.
+                bnd.isHeadlandOn = AgOpenHasHeadland;
+                PanelsAndOGLSize();
+                PanelUpdateRightAndBottom();
+                SetZoom();
+
+                Log.EventWriter("[AgOpen] Headland made in '" + currentFieldDirectory + "': " + wide + ", " + line.Count + " points");
+                string text = "Made a headland " + wide + " wide.";
+                TimedMessageBox(AgOpenReadingTime(text), "Headland", text);
+            }
+            catch (Exception ex)
+            {
+                Log.EventWriter("[AgOpen] The headland couldn't be made: " + ex);
+                TimedMessageBox(4000, "AgOpen", "The headland couldn't be made: " + ex.Message);
             }
         }
 
